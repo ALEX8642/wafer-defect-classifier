@@ -4,8 +4,9 @@
 
 Manually downloaded from: Kaggle — WM-811K wafer map dataset
 Date downloaded: 2026-06-18
-File: `LSWMD.pkl`
-Size on disk: 2.10 GB
+Download archive size: ~150 MB (compressed)
+File: `LSWMD.pkl` (extracted from archive)
+Size on disk: 2.10 GB (2.0 GiB) — normal; Kaggle distributes a compressed archive that extracts to ~2 GB
 SHA256: <!-- run `sha256sum data/raw/LSWMD.pkl` and fill in -->
 
 ## Verification
