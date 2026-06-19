@@ -101,11 +101,9 @@ are the right metrics under class imbalance, and both are reported here.
 
 ## 4. Calibration
 
-*[Fill in after running `python -m wafer.calibrate`]*
-
-**ECE before temperature scaling:** `[FILL]`
-**Temperature T:** `[FILL]`
-**ECE after temperature scaling:** `[FILL]`
+**ECE before temperature scaling:** 0.0067
+**Temperature T:** 1.1036
+**ECE after temperature scaling:** 0.0034
 
 A well-calibrated model is essential for operational decisions. When the model
 outputs P(Edge-Ring) = 0.95, an operator should be able to trust that confidence
@@ -119,17 +117,21 @@ the confidence to match empirical accuracy. A T > 1 indicates the model was
 overconfident (common in deep networks without regularisation); T < 1 indicates
 underconfidence.
 
+T = 1.10 confirms mild overconfidence — typical of a network trained from random
+initialisation without dropout. Temperature scaling halved the ECE (0.0067 → 0.0034),
+a strong improvement for a single-parameter correction. Both ECE values are low in
+absolute terms (sub-1 % miscalibration), reflecting that class-weighted CE with a
+well-balanced val set already provides implicit calibration pressure.
+
 *Reliability diagram: `outputs/reliability_diagram.png`*
 
 ---
 
 ## 5. Cost-of-quality error analysis
 
-*[Fill in after running `python -m wafer.calibrate`]*
-
-**Escapes (defect predicted as none):** `[FILL]` out of `[FILL]` defect test samples
-**False alarms (none predicted as defect):** `[FILL]` out of `[FILL]` none test samples
-**Cost-weighted error (10:1 assumption):** `[FILL]`
+**Escapes (defect predicted as none):** 59 out of 4,917 defect test samples (1.2 %)
+**False alarms (none predicted as defect):** 917 out of 29,581 none test samples (3.1 %)
+**Cost-weighted error (10:1 assumption):** 0.0436
 
 This reframing separates two error types that have very different operational costs:
 
@@ -149,17 +151,18 @@ cost-of-quality requirements rather than accepting whatever threshold maximises 
 
 The threshold sensitivity plot (`outputs/threshold_sensitivity.png`) shows how
 escape rate and false-alarm rate trade off across the full range of decision
-thresholds. Key observation: at the default threshold (argmax, no explicit τ),
-**Scratch** dominates the false-alarm count (154 of 29,486 "none" test samples
-predicted as Scratch) while providing high recall (0.92). A quality engineer
-facing a high-escape-risk customer could lower τ (accept more false alarms to
-catch more escapes); one operating a cost-sensitive line could raise τ.
+thresholds. Key observation: the best F1 occurs at τ = 0.06 (macro-F1 = 0.907),
+far lower than the naïve τ = 0.50 default — the model is very confident on "none"
+predictions, so a low threshold captures more escapes without excessive false
+alarms. A quality engineer facing a high-escape-risk customer could lower τ
+(accept more false alarms to catch more escapes); one operating a cost-sensitive
+line could raise τ. The cost-weighted error of 0.0436 at the default argmax
+threshold corresponds to a mix of 59 escaped defects (each costing 10 units) and
+917 false alarms (each costing 1 unit), normalised by test set size.
 
 ---
 
 ## 6. Grad-CAM spatial localisation
-
-*[Fill in after running `python -m wafer.explain` and reviewing outputs/grad_cam/]*
 
 Grad-CAM (Selvaraju et al., 2017) computes a class activation map by
 gradient-weighting the final convolutional layer's feature maps. The result is a
@@ -168,21 +171,40 @@ heatmap showing *where* on the wafer the model is keying for a given prediction.
 For a spatial-defect classifier, this is the interpretability check that matters:
 does the model's attention align with the region that defines the defect pattern?
 
-| Class | Expected activation region | Observed (Grad-CAM) |
-|---|---|---|
-| Edge-Ring | Perimeter ring | `[FILL after running]` |
-| Center | Central cluster | `[FILL after running]` |
-| Scratch | Linear/arc streak | `[FILL after running]` |
-| Loc | Off-center cluster | `[FILL after running]` |
-| Near-full | Nearly full coverage | `[FILL after running]` |
+| Class | Confidence | Expected region | Observed activation |
+|---|---|---|---|
+| Edge-Ring | 100 % | Perimeter ring | Interior of ring — model keys on the large passing-die zone bounded by the failing perimeter, not the ring itself |
+| Center | 54 % | Central cluster | Lower-center region — correctly localises to the failing cluster; lower confidence reflects the cluster sitting slightly below centre (Loc-like) |
+| Scratch | 99.99 % | Linear/arc streak | Tight hot spot on the upper portion of the vertical scratch streak — strong alignment with the linear defect |
+| Loc | 99.51 % | Off-center cluster | Diffuse activation distributed across centre and right side — model keying on the non-edge, non-centre aspect of the pattern rather than the cluster itself |
+| Near-full | 100 % | Broad coverage | Broad activation with emphasis on boundary transition zones (corners, right side) — the global "nearly everything failing" signature is recognised without needing precise local attribution |
 
 *Grad-CAM overlays: `outputs/grad_cam/`*
 
-If the activation aligns with the expected region, it provides evidence that the
-model has learned the physically meaningful feature — not a spurious correlation
-with wafer ID, map size, or background pixel count. If it misaligns, that is a
-finding worth reporting and investigating (e.g. is the model keying on the wafer
-boundary rather than the defect pattern?).
+**Interpretation.** Three of the five classes show clean spatial alignment
+(Scratch, Center, Near-full). Two show an inverted or diffuse pattern that warrants
+comment:
+
+- **Edge-Ring**: The model keys on the *interior* passing-die zone rather than the
+  failing perimeter ring. This is a valid learned representation — "Edge-Ring = large
+  circular passing interior bounded by a failing edge ring" — but the activation is
+  inverted relative to naive expectation. A process engineer would say: the model has
+  learned the *shape* of the intact die region rather than the defect band. This is
+  not a failure; it reflects that the interior boundary is the highest-contrast spatial
+  feature for this class.
+
+- **Loc**: Activation is diffuse rather than tightly localised on the cluster.
+  High confidence (99.51 %) despite diffuse attribution suggests the model has learned
+  a "not Edge, not Center, not full" discriminating rule at the representation level
+  rather than explicit spatial localisation of the cluster. This is a limitation worth
+  noting: if the cluster moves to a new position on a future wafer, the model may still
+  classify correctly, but the Grad-CAM provides less actionable spatial information for
+  a process engineer trying to identify the contamination site.
+
+Overall, the Grad-CAM evidence supports that the model has learned physically
+meaningful spatial features for the classes where those features are geometrically
+distinctive (Scratch, Center, Near-full). The Edge-Ring and Loc findings are worth
+noting in any operational deployment review.
 
 ---
 
