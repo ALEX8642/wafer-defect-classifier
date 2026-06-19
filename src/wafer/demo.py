@@ -18,7 +18,6 @@ Usage:
 """
 from __future__ import annotations
 
-import io
 import json
 from pathlib import Path
 
@@ -168,10 +167,9 @@ def _build_figure(
     pred_cls: int,
     cal_probs: np.ndarray,
     temperature: float,
-) -> "PIL.Image.Image":
-    """Render the 3-panel Grad-CAM figure and return it as a PIL Image."""
-    from PIL import Image  # transitive dep via torchvision or gradio
-
+    save_path: Path,
+) -> str:
+    """Render the 3-panel Grad-CAM figure, save to save_path, return the path string."""
     wafer_img = tensor_to_display(tensor)          # (H, W) uint8 {40, 160, 255}
     jet_map = plt.cm.jet(heatmap)[..., :3]         # (H, W, 3) float
     wafer_rgb = np.stack([wafer_img] * 3, axis=-1).astype(float) / 255.0
@@ -196,12 +194,10 @@ def _build_figure(
         fontsize=12, fontweight="bold",
     )
     plt.tight_layout()
-
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    buf.seek(0)
-    return Image.open(buf).copy()
+    return str(save_path)
 
 
 def _build_markdown(pred_cls: int, cal_probs: np.ndarray, temperature: float) -> str:
@@ -281,6 +277,13 @@ def _extract_examples(cfg: WaferConfig, out_dir: Path) -> list[list]:
 # ---------------------------------------------------------------------------
 
 def build_demo(cfg: WaferConfig):
+    import os
+    # Direct Gradio's temp dir into our output tree so it doesn't collide with
+    # /tmp/gradio owned by another user (e.g. root from earlier testing).
+    demo_tmp = cfg.output_dir / "demo_tmp"
+    demo_tmp.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("GRADIO_TEMP_DIR", str(demo_tmp))
+
     import gradio as gr
 
     print("Loading model assets...")
@@ -289,6 +292,8 @@ def build_demo(cfg: WaferConfig):
     print("Preparing demo examples...")
     examples = _extract_examples(cfg, cfg.output_dir / "demo_examples")
 
+    cam_out_path = demo_tmp / "cam_output.png"
+
     def predict(img_array):
         if img_array is None:
             return None, "*Upload a wafer map or click an example to classify it.*"
@@ -296,9 +301,9 @@ def build_demo(cfg: WaferConfig):
             tensor, heatmap, pred_cls, cal_probs = _run_inference(
                 img_array, model, target_layer, temperature, cfg
             )
-            fig_img = _build_figure(tensor, heatmap, pred_cls, cal_probs, temperature)
+            fig_path = _build_figure(tensor, heatmap, pred_cls, cal_probs, temperature, cam_out_path)
             md = _build_markdown(pred_cls, cal_probs, temperature)
-            return fig_img, md
+            return fig_path, md
         except Exception as exc:
             return None, f"**Error:** {exc}"
 
@@ -353,4 +358,8 @@ if __name__ == "__main__":
 
     cfg = WaferConfig.from_yaml_and_args(args.config, args)
     app = build_demo(cfg)
-    app.launch(server_port=args.port, share=args.share)
+    app.launch(
+        server_port=args.port,
+        share=args.share,
+        allowed_paths=[str(cfg.output_dir)],
+    )
