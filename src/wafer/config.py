@@ -52,15 +52,28 @@ def _anchor(p: Path) -> Path:
 
 @dataclasses.dataclass
 class WaferConfig:
+    # --- paths ---
     data_root: Path = REPO_ROOT / "data" / "raw"
     output_dir: Path = REPO_ROOT / "outputs"
+
+    # --- hardware ---
     device: str = "auto"
     num_workers: int = 4
+
+    # --- data ---
     batch_size: int = 128
+    seed: int = 42
+    input_size: int = 224          # square resize target (pixels)
+
+    # --- training ---
     num_epochs: int = 30
     lr: float = 1e-3
-    seed: int = 42
-    input_size: int = 224
+    weight_decay: float = 1e-4
+    patience: int = 7              # early-stopping: epochs without val macro-F1 gain
+
+    # --- model (Phase 1) ---
+    arch: str = "resnet18"         # resnet18 | resnet50
+    pretrained: bool = False       # ImageNet weights transfer weakly to wafer maps
 
     def __post_init__(self) -> None:
         self.data_root = _anchor(Path(self.data_root))
@@ -90,6 +103,14 @@ class WaferConfig:
                     merged[field.name] = val
         return cls(**merged)
 
+    def to_dict(self) -> dict:
+        """Serialisable snapshot (Path → str) for checkpoint metadata."""
+        d = {}
+        for f in dataclasses.fields(self):
+            v = getattr(self, f.name)
+            d[f.name] = str(v) if isinstance(v, Path) else v
+        return d
+
 
 def build_arg_parser(description: str = "wafer classifier") -> argparse.ArgumentParser:
     """
@@ -106,15 +127,18 @@ def build_arg_parser(description: str = "wafer classifier") -> argparse.Argument
     p.add_argument("--data-root", dest="data_root", type=Path, default=None)
     p.add_argument("--output-dir", dest="output_dir", type=Path, default=None)
     p.add_argument(
-        "--device",
-        type=str,
-        default=None,
+        "--device", type=str, default=None,
         help="cpu | cuda | cuda:N | mps | auto. Env WAFER_DEVICE overrides all.",
     )
     p.add_argument("--batch-size", dest="batch_size", type=int, default=None)
     p.add_argument("--num-workers", dest="num_workers", type=int, default=None)
     p.add_argument("--num-epochs", dest="num_epochs", type=int, default=None)
     p.add_argument("--lr", type=float, default=None)
+    p.add_argument("--weight-decay", dest="weight_decay", type=float, default=None)
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--input-size", dest="input_size", type=int, default=None)
+    p.add_argument("--patience", type=int, default=None)
+    p.add_argument("--arch", type=str, default=None, help="resnet18 | resnet50")
+    p.add_argument("--pretrained", dest="pretrained", action="store_true", default=None,
+                   help="Use ImageNet pretrained weights (transfers weakly to wafer maps)")
     return p

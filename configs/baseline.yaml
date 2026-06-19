@@ -12,5 +12,12 @@ num_workers: 4               # set to 0 on Windows if multiprocessing errors
 seed: 42
 num_epochs: 30
 lr: 1.0e-3
+weight_decay: 1.0e-4
 input_size: 224              # square resize target for wafer maps
 device: auto                 # "auto" → cuda if available else cpu; or "cuda"/"cpu"/"mps"
+
+# Phase 1 — model
+arch: resnet18               # resnet18 | resnet50
+pretrained: false            # ImageNet weights transfer weakly to binned wafer maps;
+                             # keep false for an honest baseline, try true to compare
+patience: 7                  # early-stopping epochs without val macro-F1 improvement
