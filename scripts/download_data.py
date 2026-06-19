@@ -87,7 +87,7 @@ def verify_dataset(data_root: Path) -> None:
         print(f"\nClass distribution (failureType):")
         dist = df_labeled["label"].value_counts()
         print(dist.to_string())
-        print(f"\nTotal classes: {dist.nunique()}")
+        print(f"\nTotal classes: {len(dist)}")
     else:
         print("WARNING: 'failureType' column not found. Check the pickle structure.")
         print(f"Columns: {list(df.columns)}")

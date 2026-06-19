@@ -31,11 +31,11 @@ def _resolve_device(hint: str) -> str:
       1. WAFER_DEVICE environment variable
       2. explicit non-"auto" value from YAML or CLI
       3. cuda if available, else cpu
+    torch is imported only when "auto" resolution requires it.
     """
-    import torch
-
     raw = os.environ.get("WAFER_DEVICE") or (hint if hint != "auto" else None)
     if raw is None:
+        import torch
         return "cuda" if torch.cuda.is_available() else "cpu"
     if not _VALID_DEVICE.match(raw):
         raise ValueError(
