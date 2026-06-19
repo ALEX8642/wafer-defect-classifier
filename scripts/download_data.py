@@ -15,7 +15,7 @@ import math
 import sys
 from pathlib import Path
 
-_MIN_SIZE_BYTES = 2_500_000_000  # warn if pkl is smaller than ~2.5 GB
+_MIN_SIZE_BYTES = 1_500_000_000  # warn if pkl is smaller than ~1.5 GB (file is ~2.1 GB in modern pickle format)
 
 
 def _unwrap_label(val) -> str:
