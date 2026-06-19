@@ -10,7 +10,7 @@ Last updated: 2026-06-19
 | 1 — Baseline pipeline | **DONE** | macro-F1 0.8662, balanced acc 0.9300 |
 | 2 — Differentiator layer | **DONE** | ECE 0.0067→0.0034, T=1.10, cost-weighted error 0.0436, Grad-CAM overlays |
 | 3 — One-click demo | **DONE** | `python -m wafer.demo` — Gradio on localhost:7860 |
-| 4 — Package & position | Not started | — |
+| 4 — Package & position | **DONE** | README.md, resume bullet, slide outline |
 
 ## Phase 1 headline numbers (commit d2a67f7)
 
