@@ -15,14 +15,12 @@ import math
 import sys
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
-
 _MIN_SIZE_BYTES = 2_500_000_000  # warn if pkl is smaller than ~2.5 GB
 
 
 def _unwrap_label(val) -> str:
     """Flatten any numpy array nesting and return the scalar label string."""
+    import numpy as np
     arr = np.asarray(val).ravel()
     if arr.size == 0:
         return ""
@@ -43,6 +41,9 @@ def _is_labeled(val) -> bool:
 
 
 def verify_dataset(data_root: Path) -> None:
+    import numpy as np
+    import pandas as pd
+
     data_root.mkdir(parents=True, exist_ok=True)
 
     pkl_path = data_root / "LSWMD.pkl"
