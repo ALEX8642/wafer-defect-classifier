@@ -1,0 +1,16 @@
+# baseline.yaml — shared config for all machines.
+#
+# Batch size guidance:
+#   4090 laptop  (24 GB VRAM): batch_size: 64
+#   5090 desktop (32 GB VRAM): batch_size: 128  ← default
+# Override at runtime: python -m wafer.train --batch-size 64
+
+data_root: data/raw          # relative to repo root; anchored to REPO_ROOT at load time
+output_dir: outputs          # checkpoints, logs, plots
+batch_size: 128
+num_workers: 4               # set to 0 on Windows if multiprocessing errors
+seed: 42
+num_epochs: 30
+lr: 1.0e-3
+input_size: 224              # square resize target for wafer maps
+device: auto                 # "auto" → cuda if available else cpu; or "cuda"/"cpu"/"mps"
