@@ -20,6 +20,35 @@ from wafer.data import get_dataloaders
 from wafer.model import build_model
 
 
+class FocalLoss(nn.Module):
+    """
+    Focal loss (Lin et al., 2017 — originally for object detection, effective for
+    class-imbalanced classification).
+
+    Standard cross-entropy treats every sample equally.  When 85 % of the dataset
+    is "none", the model quickly learns to predict "none" well and the gradient is
+    dominated by easy "none" examples even with class weighting.
+
+    Focal loss adds a modulating factor (1 - p_t)^gamma that down-weights easy
+    examples (high p_t) and focuses learning on hard ones (low p_t).  Combined
+    with class weighting, this addresses both the frequency imbalance (class weights)
+    and the difficulty imbalance (focal term) simultaneously.
+
+    gamma=0 recovers standard weighted cross-entropy.
+    gamma=2 is the default from the original paper.
+    """
+
+    def __init__(self, gamma: float = 2.0, weight: torch.Tensor | None = None) -> None:
+        super().__init__()
+        self.gamma = gamma
+        self.weight = weight
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        ce = nn.functional.cross_entropy(logits, targets, weight=self.weight, reduction="none")
+        pt = torch.exp(-ce)                          # probability of the correct class
+        return ((1.0 - pt) ** self.gamma * ce).mean()
+
+
 def set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -87,8 +116,13 @@ def train(cfg: WaferConfig) -> None:
     with open(class_map_path, "w") as f:
         json.dump(class_to_idx, f, indent=2)
 
-    model     = build_model(cfg).to(device)
-    criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
+    model = build_model(cfg).to(device)
+    if cfg.loss == "focal":
+        criterion = FocalLoss(gamma=cfg.focal_gamma, weight=class_weights.to(device))
+        print(f"Loss: FocalLoss (γ={cfg.focal_gamma}, class-weighted)")
+    else:
+        criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
+        print("Loss: CrossEntropyLoss (class-weighted)")
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.num_epochs)
     scaler    = torch.amp.GradScaler(enabled=(device_type == "cuda"))

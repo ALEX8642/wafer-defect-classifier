@@ -117,6 +117,74 @@ class GradCAM:
 
 
 # ---------------------------------------------------------------------------
+# Grad-CAM++ — sharper localisation via second-order gradient weighting
+# ---------------------------------------------------------------------------
+
+class GradCAMPlusPlus(GradCAM):
+    """
+    Grad-CAM++ (Chattopadhyay et al., 2018).
+
+    Problem with standard Grad-CAM: it global-average-pools the gradients across
+    the spatial feature map.  When a defect occupies only a small fraction of the
+    wafer (e.g. a Loc cluster or a Scratch streak), most spatial positions have
+    near-zero gradient, and averaging spreads the attribution across the whole map.
+
+    Grad-CAM++ fixes this by weighting each spatial position's gradient by how
+    much it contributes to the class logit — giving higher weight to the few
+    positions with strong discriminative gradients.  The weight formula is:
+
+        alpha_k(c)  =  grad²  /  (2·grad² + A · grad³ + ε)
+
+    where A is the activation and grad is the gradient at each spatial position.
+    The intuition: alpha is small where the activation is large relative to the
+    gradient (uniform background), and large where local gradient magnitude is
+    high (discriminative spatial position).
+
+    For wafer maps: Scratch and Loc attribution is noticeably tighter.
+    For Edge-Ring: the inverted interior activation pattern is unchanged because
+    the discriminative region is already large.
+    """
+
+    def compute(
+        self,
+        input_tensor: torch.Tensor,
+        target_class: Optional[int] = None,
+    ) -> tuple[np.ndarray, int, np.ndarray]:
+        self.model.eval()
+        x = input_tensor.clone().requires_grad_(True)
+
+        logits = self.model(x)
+        probs  = logits.softmax(dim=1).squeeze().detach().cpu().numpy()
+
+        if target_class is None:
+            target_class = int(logits.argmax(dim=1).item())
+
+        self.model.zero_grad()
+        logits[0, target_class].backward()
+
+        A  = self._activations        # (1, Ch, h, w) — feature map activations
+        G  = self._gradients          # (1, Ch, h, w) — first-order gradients
+
+        G2 = G ** 2
+        G3 = G ** 3
+        # alpha: position-wise weight balancing gradient magnitude vs activation
+        denom  = 2.0 * G2 + (A * G3).sum(dim=(2, 3), keepdim=True)
+        alpha  = G2 / (denom + 1e-8)                           # (1, Ch, h, w)
+        weights = (alpha * F.relu(G)).sum(dim=(2, 3), keepdim=True)  # (1, Ch, 1, 1)
+
+        cam = (weights * A).sum(dim=1, keepdim=True)
+        cam = F.relu(cam)
+
+        cam = cam - cam.min()
+        cam = cam / (cam.max() + 1e-8)
+        heatmap = F.interpolate(
+            cam, size=input_tensor.shape[-2:], mode="bilinear", align_corners=False
+        ).squeeze().cpu().numpy()
+
+        return heatmap, target_class, probs
+
+
+# ---------------------------------------------------------------------------
 # Convenience: revert one-hot tensor → displayable grayscale map
 # ---------------------------------------------------------------------------
 
@@ -176,7 +244,18 @@ def save_overlay(
 _EXAMPLE_CLASSES = ["Center", "Edge-Ring", "Scratch", "Loc", "Near-full"]
 
 
-def generate_cam_examples(cfg: WaferConfig, checkpoint_path: Path | None = None) -> None:
+def generate_cam_examples(
+    cfg: WaferConfig,
+    checkpoint_path: Path | None = None,
+    method: str = "gradcampp",
+) -> None:
+    """
+    Generate activation map overlays for the five most interpretable defect classes.
+
+    Args:
+        method: "gradcam" (original) or "gradcampp" (sharper Loc/Scratch attribution).
+                Defaults to gradcampp — the improved version.
+    """
     if checkpoint_path is None:
         checkpoint_path = cfg.output_dir / "best.pt"
 
@@ -189,6 +268,8 @@ def generate_cam_examples(cfg: WaferConfig, checkpoint_path: Path | None = None)
     model.eval()
 
     target_layer = model.layer4[-1]
+    cam_cls = GradCAMPlusPlus if method == "gradcampp" else GradCAM
+    print(f"  Method: {cam_cls.__name__}")
 
     _, _, test_loader, _, _ = get_dataloaders(cfg)
 
@@ -213,7 +294,7 @@ def generate_cam_examples(cfg: WaferConfig, checkpoint_path: Path | None = None)
     out_dir = cfg.output_dir / "grad_cam"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    with GradCAM(model, target_layer) as cam:
+    with cam_cls(model, target_layer) as cam:
         for cls_idx, (tensor, true_cls) in collected.items():
             inp = tensor.unsqueeze(0).to(cfg.device)
             heatmap, pred_cls, probs = cam.compute(inp, target_class=cls_idx)
@@ -227,7 +308,7 @@ def generate_cam_examples(cfg: WaferConfig, checkpoint_path: Path | None = None)
         missing = [CLASS_NAMES[i] for i in targets_wanted if i not in collected]
         print(f"  Warning: no correct example found for: {missing}")
 
-    print(f"\nGrad-CAM examples saved to {out_dir}/")
+    print(f"\nActivation map examples saved to {out_dir}/")
 
 
 # Backward-compatible stub (used by Phase 3 demo)
@@ -247,7 +328,11 @@ def grad_cam(
 if __name__ == "__main__":
     parser = build_arg_parser("wafer explain")
     parser.add_argument("--checkpoint", type=Path, default=None)
+    parser.add_argument(
+        "--method", choices=["gradcam", "gradcampp"], default="gradcampp",
+        help="Activation map method: gradcampp (default, sharper) or gradcam (original)",
+    )
     args = parser.parse_args()
     cfg  = WaferConfig.from_yaml_and_args(args.config, args)
-    print(f"Generating Grad-CAM examples for: {_EXAMPLE_CLASSES}")
-    generate_cam_examples(cfg, checkpoint_path=args.checkpoint)
+    print(f"Generating {args.method} examples for: {_EXAMPLE_CLASSES}")
+    generate_cam_examples(cfg, checkpoint_path=args.checkpoint, method=args.method)

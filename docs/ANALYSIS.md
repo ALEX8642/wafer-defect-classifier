@@ -2,9 +2,10 @@
 
 **Audience:** hiring managers, Solutions/FDE interviewers, internal R&D transfer.
 **One-line summary:** A ResNet-18 trained on public WM-811K wafer maps achieves
-macro-F1 **0.87** with calibrated probabilities, Grad-CAM spatial localisation, and
-a cost-of-quality error framework — demonstrating the intersection of
-manufacturing domain judgment and production-grade ML.
+macro-F1 **0.90** (0.87 baseline, +0.04 from test-time augmentation and per-class
+threshold tuning without retraining) with calibrated probabilities, Grad-CAM++
+spatial localisation, and a cost-of-quality error framework — demonstrating the
+intersection of manufacturing domain judgment and production-grade ML.
 
 ---
 
@@ -72,11 +73,14 @@ epoch 27/30, val macro-F1 = 0.8732.
 
 **Headline numbers (epoch 27, 4090 laptop):**
 
-| Metric | Value |
-|---|---|
-| **Macro-F1** | **0.8662** |
-| Balanced accuracy | 0.9300 |
-| Plain accuracy | 0.97 — suppressed; see below |
+| Metric | Baseline | With TTA + per-class τ |
+|---|---|---|
+| **Macro-F1** | **0.8662** | **0.9025** (+0.0363) |
+| Balanced accuracy | 0.9300 | 0.9169 |
+| Plain accuracy | 0.97 — suppressed | 0.98 — suppressed |
+
+*Improvement achieved without retraining: test-time augmentation over the D4 symmetry
+group (8 views averaged) + per-class confidence thresholds tuned on the val set.*
 
 Plain accuracy of 0.97 is misleading: a model predicting "none" for every sample
 would score 0.85 accuracy while catching zero defects. Macro-F1 weights each class
@@ -85,17 +89,25 @@ are the right metrics under class imbalance, and both are reported here.
 
 **Per-class breakdown:**
 
-| Class | Precision | Recall | F1 |
-|---|---|---|---|
-| Center | 0.85 | 0.97 | 0.90 |
-| Donut | 0.87 | 0.90 | 0.88 |
-| Edge-Loc | 0.73 | 0.92 | 0.82 |
-| Edge-Ring | 0.98 | 0.98 | 0.98 |
-| Loc | 0.64 | 0.88 | 0.74 |
-| Near-full | 1.00 | 0.87 | 0.93 |
-| Random | 0.79 | 0.97 | 0.87 |
-| Scratch | 0.55 | 0.92 | 0.69 |
-| none | 1.00 | 0.97 | 0.98 |
+| Class | Prec (base) | Prec (TTA+τ) | Rec (base) | Rec (TTA+τ) | F1 (base) | F1 (TTA+τ) |
+|---|---|---|---|---|---|---|
+| Center | 0.85 | **0.95** | 0.97 | 0.95 | 0.90 | **0.95** |
+| Donut | 0.87 | **0.87** | 0.90 | 0.89 | 0.88 | **0.88** |
+| Edge-Loc | 0.73 | **0.90** | 0.92 | 0.85 | 0.82 | **0.87** |
+| Edge-Ring | 0.98 | 0.98 | 0.98 | 0.98 | 0.98 | **0.98** |
+| Loc | 0.64 | **0.77** | 0.88 | 0.84 | 0.74 | **0.80** |
+| Near-full | 1.00 | **0.91** | 0.87 | 0.97 | 0.93 | **0.94** |
+| Random | 0.79 | **0.87** | 0.97 | 0.92 | 0.87 | **0.90** |
+| Scratch | 0.55 | **0.77** | 0.92 | 0.87 | 0.69 | **0.81** |
+| none | 1.00 | 0.99 | 0.97 | 0.99 | 0.98 | **0.99** |
+
+Key observations:
+- Scratch precision: 0.55 → 0.77 (+22 pp) — the primary improvement target
+- The precision gains come at a small recall cost: uncertain predictions that
+  previously committed to a defect class now fall through to "none" (visible in
+  the confusion matrix: Edge-Loc has 10% spill into "none" at τ=0.87)
+- This trade-off is tunable: lower the per-class τ to recover recall at the cost
+  of precision
 
 ---
 
@@ -149,16 +161,32 @@ not a calibrated number. The point is the framework: by varying the decision
 threshold on P(none), an operator can tune the operating point to their specific
 cost-of-quality requirements rather than accepting whatever threshold maximises F1.
 
+**Per-class confidence thresholds (tuned on val set):**
+
+| Class | τ | Interpretation |
+|---|---|---|
+| none | 0.05 | Model is almost always confident on clean wafers — any prediction accepted |
+| Near-full | 0.05 | Visually unmistakable — no threshold needed |
+| Edge-Ring | 0.66 | Model reaches high confidence reliably |
+| Donut | 0.66 | Similar |
+| Loc | 0.75 | More uncertain — requires higher confidence |
+| Center | 0.83 | Model makes many borderline Center predictions |
+| Scratch | **0.85** | Primary improvement target — model was predicting Scratch at 15–84% confidence |
+| Edge-Loc | 0.87 | Highest threshold — the most confused class |
+| Random | 0.88 | Scattered-failure pattern is genuinely ambiguous |
+
+High thresholds for Scratch and Edge-Loc are the expected outcome given their low
+baseline precision. Predictions below τ fall through to the next-highest class
+(typically "none") — visible in the confusion matrix as increased none predictions.
+
 The threshold sensitivity plot (`outputs/threshold_sensitivity.png`) shows how
 escape rate and false-alarm rate trade off across the full range of decision
-thresholds. Key observation: the best F1 occurs at τ = 0.06 (macro-F1 = 0.907),
-far lower than the naïve τ = 0.50 default — the model is very confident on "none"
-predictions, so a low threshold captures more escapes without excessive false
-alarms. A quality engineer facing a high-escape-risk customer could lower τ
-(accept more false alarms to catch more escapes); one operating a cost-sensitive
-line could raise τ. The cost-weighted error of 0.0436 at the default argmax
-threshold corresponds to a mix of 59 escaped defects (each costing 10 units) and
-917 false alarms (each costing 1 unit), normalised by test set size.
+thresholds. Key observation: the best global macro-F1 occurs at τ = 0.06 for the
+none-class threshold (macro-F1 = 0.907), far lower than the naïve τ = 0.50 default.
+The per-class threshold approach targets each class's specific operating point
+rather than a single global threshold. The cost-weighted error of 0.0436 at the
+default argmax threshold corresponds to a mix of 59 escaped defects (each costing
+10 units) and 917 false alarms (each costing 1 unit), normalised by test set size.
 
 ---
 

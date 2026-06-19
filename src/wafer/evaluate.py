@@ -8,10 +8,17 @@ Metrics note:
     scores ~85 % without learning any defect pattern. This script reports
     macro-F1 (equal weight per class regardless of frequency) and balanced
     accuracy as the honest headline numbers.
+
+Improvement options (configured via baseline.yaml or CLI overrides):
+    --tta           Average predictions over the 8-element D4 symmetry group.
+                    Exploits the rotational/flip symmetry of wafer maps; no retraining.
+    thresholds.json Per-class confidence thresholds tuned on the val set (written by
+                    calibrate.py). Applied automatically if the file exists.
 """
 from __future__ import annotations
 
 import csv
+import json
 from pathlib import Path
 
 import matplotlib
@@ -31,6 +38,90 @@ from wafer.data import get_dataloaders, CLASS_NAMES
 from wafer.model import build_model
 
 
+# ---------------------------------------------------------------------------
+# Test-time augmentation over the D4 symmetry group
+# ---------------------------------------------------------------------------
+
+def tta_predict(
+    model: torch.nn.Module,
+    tensor_batch: torch.Tensor,
+    device: str,
+    temperature: float = 1.0,
+) -> np.ndarray:
+    """
+    Average calibrated softmax probabilities over the 8 elements of D4.
+
+    The dihedral group D4 describes the symmetries of a square: 4 rotations
+    (0°, 90°, 180°, 270°) and a horizontal flip of each.  Wafer maps have
+    D4 symmetry — a rotated or mirrored defect pattern is physically the same
+    defect.  Averaging the model's output across all 8 views reduces prediction
+    variance without any retraining.
+
+    Args:
+        model: Trained ResNet-18 in eval mode.
+        tensor_batch: (B, 3, H, W) one-hot encoded wafer maps.
+        device: "cuda" or "cpu".
+        temperature: Calibration temperature T; divides logits before softmax.
+
+    Returns:
+        Averaged probability matrix, shape (B, num_classes).
+    """
+    model.eval()
+    all_probs = []
+    for k in range(4):
+        for flip in (False, True):
+            x = tensor_batch.clone()
+            if flip:
+                x = x.flip(3)               # horizontal flip along width axis
+            x = torch.rot90(x, k, [2, 3])   # rotate k×90° in the H-W plane
+            with torch.no_grad():
+                logits = model(x.to(device, non_blocking=True))
+            probs = torch.softmax(logits / max(temperature, 0.05), dim=1).cpu().numpy()
+            all_probs.append(probs)
+    return np.mean(all_probs, axis=0)  # (B, num_classes)
+
+
+# ---------------------------------------------------------------------------
+# Per-class confidence threshold application
+# ---------------------------------------------------------------------------
+
+def apply_thresholds(
+    probs: np.ndarray,
+    thresholds: dict[str, float],
+    class_names: list[str],
+) -> np.ndarray:
+    """
+    Apply per-class confidence thresholds to a probability matrix.
+
+    Decision rule for each sample:
+      1. Start with the highest-probability class c.
+      2. If P(c) >= thresholds[c], predict c.
+      3. Otherwise mask c out and try the next-highest class.
+      4. If no class meets its threshold, fall back to plain argmax.
+
+    This "threshold cascade" is what makes Scratch precision tunable:
+    raising τ_Scratch from 0.50 to (e.g.) 0.72 means the model only flags
+    a wafer as Scratch when it is 72 % confident, reducing false alarms.
+    """
+    preds = np.empty(len(probs), dtype=int)
+    for i in range(len(probs)):
+        p = probs[i].copy()
+        for _ in range(len(class_names)):
+            c = int(p.argmax())
+            tau = thresholds.get(class_names[c], 0.0)
+            if p[c] >= tau:
+                preds[i] = c
+                break
+            p[c] = -np.inf          # mask this class and try the next
+        else:
+            preds[i] = int(probs[i].argmax())   # fallback: no class met threshold
+    return preds
+
+
+# ---------------------------------------------------------------------------
+# Main evaluation function
+# ---------------------------------------------------------------------------
+
 def evaluate(cfg: WaferConfig, checkpoint_path: Path | None = None) -> None:
     if checkpoint_path is None:
         checkpoint_path = cfg.output_dir / "best.pt"
@@ -48,18 +139,47 @@ def evaluate(cfg: WaferConfig, checkpoint_path: Path | None = None) -> None:
     print(f"Checkpoint : {checkpoint_path}  (epoch {ckpt.get('epoch', '?')}, "
           f"val macro-F1 {ckpt.get('val_macro_f1', float('nan')):.4f})")
 
+    # Load calibration temperature (written by calibrate.py)
+    temperature = 1.0
+    temp_path = cfg.output_dir / "temperature.json"
+    if temp_path.exists():
+        with open(temp_path) as f:
+            temperature = float(json.load(f)["temperature"])
+        print(f"Temperature: T={temperature:.4f}  (calibrated)")
+    else:
+        print("Temperature: T=1.0  (uncalibrated — run python -m wafer.calibrate first)")
+
+    # Load per-class thresholds (written by calibrate.py tune_thresholds step)
+    thresholds: dict[str, float] = {}
+    thresh_path = cfg.output_dir / "thresholds.json"
+    if thresh_path.exists():
+        with open(thresh_path) as f:
+            thresholds = json.load(f)
+        print(f"Thresholds : {len(thresholds)} class thresholds loaded")
+
     _, _, test_loader, _, _ = get_dataloaders(cfg)
 
-    all_preds: list = []
-    all_targets: list = []
-    with torch.no_grad():
-        for inputs, targets in tqdm(test_loader, desc="Evaluating"):
-            logits = model(inputs.to(cfg.device, non_blocking=True))
-            all_preds.extend(logits.argmax(dim=1).cpu().numpy())
-            all_targets.extend(targets.numpy())
+    mode_tag = "TTA×8" if cfg.tta else "standard"
+    all_probs: list[np.ndarray] = []
+    all_targets: list[int] = []
 
-    preds   = np.array(all_preds)
-    targets = np.array(all_targets)
+    for inputs, targets in tqdm(test_loader, desc=f"Evaluating [{mode_tag}]"):
+        if cfg.tta:
+            probs = tta_predict(model, inputs, cfg.device, temperature)
+        else:
+            with torch.no_grad():
+                logits = model(inputs.to(cfg.device, non_blocking=True))
+            probs = torch.softmax(logits / max(temperature, 0.05), dim=1).cpu().numpy()
+        all_probs.append(probs)
+        all_targets.extend(targets.numpy())
+
+    probs_arr = np.vstack(all_probs)
+    targets   = np.array(all_targets)
+    preds     = (
+        apply_thresholds(probs_arr, thresholds, class_names)
+        if thresholds
+        else probs_arr.argmax(axis=1)
+    )
 
     macro_f1 = float(
         classification_report(targets, preds, target_names=class_names,
@@ -67,8 +187,15 @@ def evaluate(cfg: WaferConfig, checkpoint_path: Path | None = None) -> None:
     )
     bal_acc = balanced_accuracy_score(targets, preds)
 
+    extras = []
+    if cfg.tta:
+        extras.append("TTA×8")
+    if thresholds:
+        extras.append("per-class τ")
+    header = "TEST SET RESULTS" + (f"  [{', '.join(extras)}]" if extras else "")
+
     print("\n" + "=" * 64)
-    print("TEST SET RESULTS")
+    print(header)
     print("=" * 64)
     print(f"  Macro-F1          : {macro_f1:.4f}  ← headline metric")
     print(f"  Balanced accuracy : {bal_acc:.4f}")

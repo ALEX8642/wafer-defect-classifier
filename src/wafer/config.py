@@ -75,6 +75,13 @@ class WaferConfig:
     arch: str = "resnet18"         # resnet18 | resnet50
     pretrained: bool = False       # ImageNet weights transfer weakly to wafer maps
 
+    # --- inference ---
+    tta: bool = False              # test-time augmentation over the D4 symmetry group
+
+    # --- loss (Phase C retraining) ---
+    loss: str = "ce"               # ce | focal
+    focal_gamma: float = 2.0       # focal loss concentration parameter
+
     def __post_init__(self) -> None:
         self.data_root = _anchor(Path(self.data_root))
         self.output_dir = _anchor(Path(self.output_dir))
@@ -141,4 +148,9 @@ def build_arg_parser(description: str = "wafer classifier") -> argparse.Argument
     p.add_argument("--arch", type=str, default=None, help="resnet18 | resnet50")
     p.add_argument("--pretrained", dest="pretrained", action="store_true", default=None,
                    help="Use ImageNet pretrained weights (transfers weakly to wafer maps)")
+    p.add_argument("--tta", action="store_true", default=None,
+                   help="Enable test-time augmentation over the D4 symmetry group")
+    p.add_argument("--loss", type=str, default=None, help="ce | focal")
+    p.add_argument("--focal-gamma", dest="focal_gamma", type=float, default=None,
+                   help="Focal loss γ parameter (default 2.0)")
     return p

@@ -12,3 +12,5 @@ venv/
 *.pth
 *.log
 .DS_Store
+*.zip
+*.pkl

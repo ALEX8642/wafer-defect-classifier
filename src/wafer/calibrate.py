@@ -261,6 +261,74 @@ def plot_threshold_sensitivity(
 
 
 # ---------------------------------------------------------------------------
+# Per-class confidence threshold tuning
+# ---------------------------------------------------------------------------
+
+def tune_thresholds(
+    model: nn.Module,
+    val_loader,
+    cfg: WaferConfig,
+    temperature: float,
+) -> dict[str, float]:
+    """
+    Grid-search per-class confidence threshold on the val set, maximising per-class F1.
+
+    The default decision rule is argmax(probs) — whichever class has the highest
+    probability wins, regardless of how high that probability is.  For Scratch
+    (precision 0.55 at baseline), the model is flagging wafers as Scratch even
+    when its confidence is only slightly above chance.  By requiring P(Scratch) >= τ,
+    we reduce false alarms at the cost of slightly fewer true detections — a
+    trade-off controlled by τ.
+
+    This function searches τ ∈ [0.05, 0.95] in steps of 0.01 for each class
+    independently, picking the τ that maximises that class's F1 on the val set.
+    The resulting thresholds are saved to outputs/thresholds.json and loaded
+    automatically by evaluate.py and demo.py.
+
+    Returns:
+        dict mapping class name → optimal confidence threshold.
+    """
+    all_probs: list[np.ndarray] = []
+    all_labels: list[int] = []
+    with torch.no_grad():
+        for inputs, labels in tqdm(val_loader, desc="Threshold tuning", leave=False):
+            logits = model(inputs.to(cfg.device))
+            probs = torch.softmax(logits / max(temperature, 0.05), dim=1).cpu().numpy()
+            all_probs.append(probs)
+            all_labels.extend(labels.numpy())
+
+    probs = np.vstack(all_probs)
+    labels = np.array(all_labels)
+
+    thresholds: dict[str, float] = {}
+    grid = np.arange(0.05, 0.96, 0.01)
+
+    for cls_idx, cls_name in enumerate(CLASS_NAMES):
+        best_f1, best_tau = -1.0, 0.5
+        for tau in grid:
+            p = probs.copy()
+            # Suppress this class where its confidence falls below the threshold
+            mask = p[:, cls_idx] < tau
+            p[mask, cls_idx] = -np.inf
+            preds = p.argmax(axis=1)
+
+            tp = float(((preds == cls_idx) & (labels == cls_idx)).sum())
+            fp = float(((preds == cls_idx) & (labels != cls_idx)).sum())
+            fn = float(((preds != cls_idx) & (labels == cls_idx)).sum())
+            prec = tp / max(tp + fp, 1.0)
+            rec  = tp / max(tp + fn, 1.0)
+            f1   = 2.0 * prec * rec / max(prec + rec, 1e-9)
+
+            if f1 > best_f1:
+                best_f1, best_tau = f1, float(tau)
+
+        thresholds[cls_name] = best_tau
+        print(f"  {cls_name:12s}  τ={best_tau:.2f}  val-F1={best_f1:.4f}")
+
+    return thresholds
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -333,13 +401,21 @@ def calibrate(cfg: WaferConfig, checkpoint_path: Path | None = None) -> None:
     print(f"  Cost-weighted error: {cost_before['cost_weighted_error']:.4f}")
     print(f"  (calibration changes confidence not argmax predictions, so escape/FA counts unchanged)")
 
+    # --- Per-class threshold tuning ---
+    print("\nTuning per-class confidence thresholds on val set...")
+    thresholds = tune_thresholds(model, val_loader, cfg, T)
+    thresh_path = cfg.output_dir / "thresholds.json"
+    with open(thresh_path, "w") as f:
+        json.dump(thresholds, f, indent=2)
+    print(f"Thresholds saved: {thresh_path}")
+
     # --- Threshold sensitivity ---
     plot_threshold_sensitivity(
         test_logits, test_labels_np, T,
         cfg.output_dir / "threshold_sensitivity.png",
     )
 
-    print(f"\nAll Phase 2 calibration outputs saved to {cfg.output_dir}/")
+    print(f"\nAll calibration outputs saved to {cfg.output_dir}/")
 
 
 if __name__ == "__main__":

@@ -33,7 +33,8 @@ import torch.nn.functional as F
 from wafer.config import WaferConfig, build_arg_parser
 from wafer.data import get_dataloaders, CLASS_NAMES
 from wafer.model import build_model
-from wafer.explain import GradCAM, tensor_to_display
+from wafer.explain import GradCAMPlusPlus, tensor_to_display
+from wafer.evaluate import tta_predict, apply_thresholds
 
 
 # ---------------------------------------------------------------------------
@@ -86,9 +87,14 @@ _PROCESS_NOTES: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 def _load_assets(cfg: WaferConfig):
-    """Load checkpoint and temperature scalar. Returns (model, target_layer, T)."""
+    """Load checkpoint, temperature scalar, and per-class thresholds.
+
+    Returns (model, target_layer, temperature, thresholds).
+    thresholds is an empty dict if thresholds.json does not exist yet.
+    """
     ckpt_path = cfg.output_dir / "best.pt"
     temp_path = cfg.output_dir / "temperature.json"
+    thresh_path = cfg.output_dir / "thresholds.json"
 
     if not ckpt_path.exists():
         raise FileNotFoundError(
@@ -108,8 +114,14 @@ def _load_assets(cfg: WaferConfig):
     else:
         print(f"Warning: {temp_path} not found — using T=1.0 (uncalibrated)")
 
+    thresholds: dict = {}
+    if thresh_path.exists():
+        with open(thresh_path) as f:
+            thresholds = json.load(f)
+        print(f"  Per-class thresholds loaded ({len(thresholds)} classes)")
+
     target_layer = model.layer4[-1]
-    return model, target_layer, temperature
+    return model, target_layer, temperature, thresholds
 
 
 # ---------------------------------------------------------------------------
@@ -140,24 +152,39 @@ def _run_inference(
     model: torch.nn.Module,
     target_layer: torch.nn.Module,
     temperature: float,
+    thresholds: dict,
     cfg: WaferConfig,
 ):
     """
-    Full pipeline: decode PNG → calibrated probs + Grad-CAM heatmap.
+    Full pipeline: decode PNG → calibrated probs (TTA if enabled) + Grad-CAM++ heatmap.
+
+    Two-pass design:
+      Pass 1 — calibrated probabilities via TTA or single forward pass (no grad).
+               Per-class thresholds applied to pick the predicted class.
+      Pass 2 — Grad-CAM++ backward pass for the predicted class heatmap.
+               Always single-pass (TTA gradients don't average meaningfully).
 
     Returns (tensor, heatmap, pred_cls, calibrated_probs).
     """
     tensor = _png_to_tensor(img_array, cfg.input_size)
     inp = tensor.unsqueeze(0).to(cfg.device)
 
-    # Calibrated forward pass (no grad, just probabilities)
-    with torch.no_grad():
-        logits = model(inp)
-    cal_probs = torch.softmax(logits / max(temperature, 0.05), dim=1).squeeze().cpu().numpy()
-    pred_cls = int(cal_probs.argmax())
+    # Pass 1: calibrated probabilities
+    if cfg.tta:
+        cal_probs = tta_predict(model, tensor.unsqueeze(0), cfg.device, temperature)[0]
+    else:
+        with torch.no_grad():
+            logits = model(inp)
+        cal_probs = torch.softmax(logits / max(temperature, 0.05), dim=1).squeeze().cpu().numpy()
 
-    # Grad-CAM for the predicted class
-    with GradCAM(model, target_layer) as cam:
+    # Apply per-class thresholds or plain argmax
+    if thresholds:
+        pred_cls = int(apply_thresholds(cal_probs[np.newaxis, :], thresholds, CLASS_NAMES)[0])
+    else:
+        pred_cls = int(cal_probs.argmax())
+
+    # Pass 2: Grad-CAM++ for the predicted class
+    with GradCAMPlusPlus(model, target_layer) as cam:
         heatmap, _, _ = cam.compute(inp, target_class=pred_cls)
 
     return tensor, heatmap, pred_cls, cal_probs
@@ -288,7 +315,7 @@ def build_demo(cfg: WaferConfig):
     import gradio as gr
 
     print("Loading model assets...")
-    model, target_layer, temperature = _load_assets(cfg)
+    model, target_layer, temperature, thresholds = _load_assets(cfg)
 
     print("Preparing demo examples...")
     examples = _extract_examples(cfg, cfg.output_dir / "demo_examples")
@@ -300,7 +327,7 @@ def build_demo(cfg: WaferConfig):
             return None, "*Upload a wafer map or click an example to classify it.*"
         try:
             tensor, heatmap, pred_cls, cal_probs = _run_inference(
-                img_array, model, target_layer, temperature, cfg
+                img_array, model, target_layer, temperature, thresholds, cfg
             )
             # Unique filename per call so Gradio doesn't serve a cached copy
             _call_count[0] += 1
