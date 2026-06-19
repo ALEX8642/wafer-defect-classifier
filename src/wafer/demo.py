@@ -19,6 +19,8 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 
 import matplotlib
@@ -277,12 +279,11 @@ def _extract_examples(cfg: WaferConfig, out_dir: Path) -> list[list]:
 # ---------------------------------------------------------------------------
 
 def build_demo(cfg: WaferConfig):
-    import os
-    # Direct Gradio's temp dir into our output tree so it doesn't collide with
-    # /tmp/gradio owned by another user (e.g. root from earlier testing).
-    demo_tmp = cfg.output_dir / "demo_tmp"
-    demo_tmp.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("GRADIO_TEMP_DIR", str(demo_tmp))
+    # Use tempfile.mkdtemp() so the temp dir is always owned by the current user.
+    # Avoids PermissionError when /tmp/gradio or outputs/demo_tmp was created by
+    # a different user (e.g. root during development/testing).
+    demo_tmp = Path(tempfile.mkdtemp(prefix="wafer_demo_"))
+    os.environ["GRADIO_TEMP_DIR"] = str(demo_tmp)
 
     import gradio as gr
 
@@ -345,7 +346,7 @@ def build_demo(cfg: WaferConfig):
             fn=predict, inputs=[img_input], outputs=[cam_output, md_output]
         )
 
-    return demo
+    return demo, demo_tmp
 
 
 if __name__ == "__main__":
@@ -357,9 +358,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     cfg = WaferConfig.from_yaml_and_args(args.config, args)
-    app = build_demo(cfg)
+    app, demo_tmp = build_demo(cfg)
     app.launch(
         server_port=args.port,
         share=args.share,
-        allowed_paths=[str(cfg.output_dir)],
+        allowed_paths=[str(cfg.output_dir), str(demo_tmp)],
     )
