@@ -293,7 +293,7 @@ def build_demo(cfg: WaferConfig):
     print("Preparing demo examples...")
     examples = _extract_examples(cfg, cfg.output_dir / "demo_examples")
 
-    cam_out_path = demo_tmp / "cam_output.png"
+    _call_count = [0]  # mutable counter in closure
 
     def predict(img_array):
         if img_array is None:
@@ -302,7 +302,10 @@ def build_demo(cfg: WaferConfig):
             tensor, heatmap, pred_cls, cal_probs = _run_inference(
                 img_array, model, target_layer, temperature, cfg
             )
-            fig_path = _build_figure(tensor, heatmap, pred_cls, cal_probs, temperature, cam_out_path)
+            # Unique filename per call so Gradio doesn't serve a cached copy
+            _call_count[0] += 1
+            cam_path = demo_tmp / f"cam_{_call_count[0]}.png"
+            fig_path = _build_figure(tensor, heatmap, pred_cls, cal_probs, temperature, cam_path)
             md = _build_markdown(pred_cls, cal_probs, temperature)
             return fig_path, md
         except Exception as exc:
