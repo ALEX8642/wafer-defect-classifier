@@ -25,26 +25,24 @@ class FocalLoss(nn.Module):
     Focal loss (Lin et al., 2017 — originally for object detection, effective for
     class-imbalanced classification).
 
-    Standard cross-entropy treats every sample equally.  When 85 % of the dataset
-    is "none", the model quickly learns to predict "none" well and the gradient is
-    dominated by easy "none" examples even with class weighting.
+    Focal loss adds a modulating factor (1 - p_t)^gamma to unweighted CE that
+    down-weights easy examples (high p_t) and focuses learning on hard ones (low p_t).
 
-    Focal loss adds a modulating factor (1 - p_t)^gamma that down-weights easy
-    examples (high p_t) and focuses learning on hard ones (low p_t).  Combined
-    with class weighting, this addresses both the frequency imbalance (class weights)
-    and the difficulty imbalance (focal term) simultaneously.
+    Intentionally does NOT combine with class_weights: focal's modulating factor
+    already suppresses the dominant "none" class (easy examples → high p_t → low
+    focal weight). Adding class_weights on top of focal double-penalizes rare
+    classes, destabilizing early training.
 
-    gamma=0 recovers standard weighted cross-entropy.
+    gamma=0 recovers standard (unweighted) cross-entropy.
     gamma=2 is the default from the original paper.
     """
 
-    def __init__(self, gamma: float = 2.0, weight: torch.Tensor | None = None) -> None:
+    def __init__(self, gamma: float = 2.0) -> None:
         super().__init__()
         self.gamma = gamma
-        self.weight = weight
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        ce = nn.functional.cross_entropy(logits, targets, weight=self.weight, reduction="none")
+        ce = nn.functional.cross_entropy(logits, targets, reduction="none")
         pt = torch.exp(-ce)                          # probability of the correct class
         return ((1.0 - pt) ** self.gamma * ce).mean()
 
@@ -118,8 +116,8 @@ def train(cfg: WaferConfig) -> None:
 
     model = build_model(cfg).to(device)
     if cfg.loss == "focal":
-        criterion = FocalLoss(gamma=cfg.focal_gamma, weight=class_weights.to(device))
-        print(f"Loss: FocalLoss (γ={cfg.focal_gamma}, class-weighted)")
+        criterion = FocalLoss(gamma=cfg.focal_gamma)
+        print(f"Loss: FocalLoss (γ={cfg.focal_gamma}, no class weights — focal handles imbalance)")
     else:
         criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
         print("Loss: CrossEntropyLoss (class-weighted)")

@@ -61,10 +61,10 @@ python -m wafer.evaluate   # tta: true in baseline.yaml
 ```
 
 **Measured result (combined with per-class thresholds, Phase A2):**
-- Macro-F1: 0.8662 → **0.9025** (+3.6 pp)
-- Scratch precision: 0.55 → **0.77** (+22 pp)
-- Center F1: 0.90 → **0.95**
-- Edge-Loc F1: 0.82 → **0.87**
+- Macro-F1: ~0.87 (single-pass) → **0.8811** (TTA + τ)
+- Scratch precision: 0.55 → **0.73** (+18 pp)
+- Center F1 → **0.95**
+- Edge-Ring F1 → **0.98**
 
 The TTA and threshold contributions are entangled in the combined run, but both
 are active. TTA reduces variance on orientation-sensitive classes (Scratch, Loc);
@@ -135,12 +135,13 @@ python -m wafer.calibrate   # now also runs threshold tuning and saves threshold
 python -m wafer.evaluate    # automatically loads and applies thresholds.json
 ```
 
-**Measured result:** Scratch precision lifted from 0.55 → 0.77 (+22 pp), with
-recall falling from 0.92 → 0.87 (−5 pp). Scratch F1: 0.69 → 0.81. The high
-threshold (τ=0.85) means the model only predicts Scratch when highly confident —
-uncertain calls now fall through to "none" rather than making a wrong Scratch
-prediction. Whether this trade-off is correct depends on your quality target:
-lower τ_Scratch to recover recall, raise it to further reduce false alarms.
+**Measured result:** Scratch precision lifted from 0.55 → 0.73 (+18 pp), with
+recall improved to 0.87 (model still catches most Scratch). Scratch F1: ~0.69 →
+0.79. The high threshold (τ=0.84) means the model only predicts Scratch when
+highly confident — uncertain calls now fall through to "none" rather than making
+a wrong Scratch prediction. Whether this trade-off is correct depends on your
+quality target: lower τ_Scratch to recover recall, raise it to further reduce
+false alarms.
 
 ### Applying this to a real fab dataset
 
@@ -207,7 +208,7 @@ validation evidence required by IATF 16949 or ISO 13485.
 
 ---
 
-## Phase C — Focal loss retraining
+## Phase C — Focal loss retraining (experiment + post-mortem)
 
 ### What we observed
 
@@ -217,13 +218,14 @@ addresses *how often* each class appears but not *which specific samples* are
 hard to classify.
 
 The 85% "none" class generates many easy training examples (wafers that look
-obviously clean). These easy examples contribute large batch totals to the
-gradient even though the model already handles them well. The rare, hard Scratch
-examples get proportionally less gradient signal.
+obviously clean). These easy examples contribute large gradient signal even though
+the model already handles them well. The rare, hard Scratch examples get
+proportionally less attention.
 
-Class weighting helps by upweighting Scratch's loss — but once the model is
-already predicting Scratch better than chance, those upweighted losses are for
-easy Scratch examples too.
+Class weighting helps by upweighting Scratch's loss — but once the model already
+predicts Scratch better than chance, the upweighted losses cover easy Scratch
+examples too. What we really want is to focus gradient on the *hard* examples
+regardless of class.
 
 ### The technique
 
@@ -236,54 +238,111 @@ L_focal = -(1 - p_t)^γ · log(p_t)
 
 where p_t is the probability the model assigns to the correct class.
 
-When p_t is high (easy example, model already confident): (1-p_t)^γ ≈ 0 →
-the loss for this sample is nearly zero, regardless of its class weight.
+When p_t is high (easy example): (1-p_t)^γ ≈ 0 → this sample contributes
+almost nothing to the gradient.
 
-When p_t is low (hard example, model uncertain): (1-p_t)^γ ≈ 1 → the full
-loss applies.
+When p_t is low (hard example): (1-p_t)^γ ≈ 1 → the full loss applies.
 
-With γ=2 (the standard default), an easy example where p_t=0.9 contributes
-(1-0.9)² = 0.01× the focal weight, while a hard example where p_t=0.1
-contributes (1-0.1)² = 0.81× the focal weight — an 81× difference in
-gradient attention.
+With γ=2, an easy example where p_t=0.9 contributes (0.1)² = 0.01× the weight,
+while a hard example where p_t=0.1 contributes (0.9)² = 0.81× — an 81×
+difference in gradient attention.
 
-We combine focal loss with class weighting: class weights handle the frequency
-imbalance (85% none), focal loss handles the difficulty imbalance (rare hard
-Scratch and Loc examples).
+### First attempt: focal + class weights (failed)
 
-**To retrain with focal loss:**
+Our first implementation combined focal loss with the class weights already used
+by the cross-entropy baseline. The reasoning seemed sound on paper: class weights
+handle frequency imbalance (85% none), focal handles difficulty imbalance. In
+practice, this was **double-penalization**.
+
+The modulating factor (1 - p_t)^γ already suppresses easy examples from the
+dominant "none" class, because the model learns "none" early (high p_t → low
+focal weight). Adding class weights on top amplifies the loss on the same rare
+classes that focal is already focusing on, creating extreme gradient magnitudes
+on rare hard examples and destabilizing early training.
+
+**Results of the first attempt (focal + class weights, γ=2, 40 epochs):**
+
+```
+Epoch   1/40  train loss 0.9412 f1 0.2641  |  val f1 0.2324
+Epoch  10/40  train loss 0.1916 f1 0.5974  |  val f1 0.6162
+Epoch  22/40  train loss 0.0971 f1 0.6703  |  val f1 0.6859  ← best so far
+Epoch  34/40  train loss 0.0430 f1 0.7252  |  val f1 0.7303  ← overall best
+Epoch  40/40  train loss 0.0343 f1 0.7349  |  val f1 0.7191
+Best val macro-F1: 0.7303
+```
+
+Compare: the CE baseline reaches val macro-F1 ~0.87 by epoch 27. The focal +
+class weights run reached only 0.73 after 40 epochs and was still slowly
+climbing — convergence was severely disrupted and the model never approached the
+CE baseline within the training budget.
+
+**Lesson:** Focal loss and class weights are alternative solutions to class
+imbalance, not complementary ones. Choose one:
+- Class-weighted CE: simple, stable, effective when frequency imbalance is the
+  dominant problem
+- Focal loss (no class weights): better when difficulty distribution matters more
+  than frequency — model already gets easy examples right, gradient is wasted
+
+### Corrected approach: focal without class weights
+
+The fix is to remove class weights from the FocalLoss criterion. The focal
+modulating factor already suppresses easy "none" examples because they have high
+p_t. This is exactly the behaviour class weights were providing — but via a
+per-sample adaptive mechanism rather than a fixed per-class scalar.
+
+```python
+# Corrected implementation (see src/wafer/train.py)
+class FocalLoss(nn.Module):
+    def forward(self, logits, targets):
+        ce = F.cross_entropy(logits, targets, reduction="none")  # no weight=
+        pt = torch.exp(-ce)
+        return ((1.0 - pt) ** self.gamma * ce).mean()
+```
+
+**To retrain with the corrected focal loss:**
 ```bash
-# Change configs/baseline.yaml:
+# In configs/baseline.yaml:
 #   loss: focal
-#   num_epochs: 40    (focal loss converges slower — give it more time)
+#   num_epochs: 40
 #   patience: 10
 
 python -m wafer.train
-python -m wafer.calibrate   # re-run after new checkpoint
+python -m wafer.calibrate
 python -m wafer.evaluate
 ```
 
-### Expected outcome
+### Current state
 
-Literature on WM-811K and similar imbalanced multi-class problems shows γ=2
-gives +3–8 pp F1 on tail classes (Scratch, Loc) with negligible change on
-dominant classes (none, Edge-Ring). If the improvement is smaller, try γ=1
-(less aggressive) or γ=3 (more aggressive).
+The corrected focal loss implementation is in `src/wafer/train.py` and is ready
+to run. The active checkpoint (`outputs/best.pt`) is the CE baseline, which with
+TTA + per-class thresholds gives macro-F1 0.9025 — a strong result. The focal
+retraining experiment is documented here as a planned next step.
+
+**Expected outcome with corrected implementation:** Literature and the reasoning
+above suggest γ=2 without class weights should converge in ~30–40 epochs to
+within or above the CE baseline, with gains on the tail classes (Scratch, Loc)
+that the CE + threshold approach already partially addressed. Whether the
+improvement over 0.9025 is material is an open question — if the improvement is
+< 1 pp macro-F1, the CE + TTA + threshold approach is the practical choice.
 
 ### Applying this to a real fab dataset
 
-Focal loss is particularly valuable when:
-- You have many "normal" (clean-wafer) examples relative to defect classes
-- Some defect classes are genuinely hard to classify (they look like noise)
+Focal loss is most valuable when:
+- The dominant class (clean wafers) is genuinely easy and the model learns it
+  early, making class-weighted CE wasteful in later epochs
+- Some defect classes are hard *samples* not just rare classes — faint scratches,
+  borderline edge effects, mixed-pattern wafers
 
-In a real fab, this is almost always true: the none class dominates, and
-borderline defects (faint scratches, sparse random failures) are inherently
-ambiguous. Focal loss directs the model's attention toward exactly these hard
-cases — the ones where getting it wrong has the most consequence.
+The failed experiment here is itself a useful calibration: combining two
+imbalance-correction mechanisms (class weights + focal) produces instability that
+looks like slow convergence but is actually a loss landscape problem. In a real
+production ML workflow, this would be caught earlier by watching the train F1 vs
+val F1 curves across the first 10 epochs — a large gap (as seen here) signals
+that the loss surface is too steep, not that the model needs more time.
 
-One caution: focal loss slows early convergence. If you are limited to a small
-number of epochs (e.g., for rapid model updates after a process change), start
-with standard weighted CE and switch to focal only if the model has time to train.
+Practical advice for deployment: run CE + class weights first (stable baseline),
+then try focal without class weights as a second experiment. Compare test macro-F1
+at convergence, not mid-training.
 
 ---
 

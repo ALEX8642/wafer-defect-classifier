@@ -27,5 +27,5 @@ tta: true                    # test-time augmentation over the D4 group (4 rotat
                              # averages 8 softmax outputs; ~+1-2% macro-F1 at inference cost
 
 # Phase C — focal loss retraining (change loss to "focal" when retraining)
-loss: ce                     # ce | focal  (keep "ce" to reproduce original results)
+loss: ce                     # ce | focal  (change to "focal" for experimental retraining)
 focal_gamma: 2.0             # focal loss γ: higher = more focus on hard examples

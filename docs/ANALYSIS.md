@@ -2,10 +2,10 @@
 
 **Audience:** hiring managers, Solutions/FDE interviewers, internal R&D transfer.
 **One-line summary:** A ResNet-18 trained on public WM-811K wafer maps achieves
-macro-F1 **0.90** (0.87 baseline, +0.04 from test-time augmentation and per-class
-threshold tuning without retraining) with calibrated probabilities, Grad-CAM++
-spatial localisation, and a cost-of-quality error framework — demonstrating the
-intersection of manufacturing domain judgment and production-grade ML.
+macro-F1 **0.88** (single-pass baseline ~0.87, +0.01 from test-time augmentation
+and per-class threshold tuning without retraining) with calibrated probabilities,
+Grad-CAM++ spatial localisation, and a cost-of-quality error framework —
+demonstrating the intersection of manufacturing domain judgment and production-grade ML.
 
 ---
 
@@ -75,12 +75,13 @@ epoch 27/30, val macro-F1 = 0.8732.
 
 | Metric | Baseline | With TTA + per-class τ |
 |---|---|---|
-| **Macro-F1** | **0.8662** | **0.9025** (+0.0363) |
-| Balanced accuracy | 0.9300 | 0.9169 |
+| **Macro-F1** | **~0.87** | **0.8811** |
+| Balanced accuracy | ~0.93 | 0.9213 |
 | Plain accuracy | 0.97 — suppressed | 0.98 — suppressed |
 
 *Improvement achieved without retraining: test-time augmentation over the D4 symmetry
-group (8 views averaged) + per-class confidence thresholds tuned on the val set.*
+group (8 views averaged) + per-class confidence thresholds tuned on the val set.
+Val macro-F1 of this checkpoint: 0.8627 at epoch 27.*
 
 Plain accuracy of 0.97 is misleading: a model predicting "none" for every sample
 would score 0.85 accuracy while catching zero defects. Macro-F1 weights each class
@@ -89,33 +90,33 @@ are the right metrics under class imbalance, and both are reported here.
 
 **Per-class breakdown:**
 
-| Class | Prec (base) | Prec (TTA+τ) | Rec (base) | Rec (TTA+τ) | F1 (base) | F1 (TTA+τ) |
-|---|---|---|---|---|---|---|
-| Center | 0.85 | **0.95** | 0.97 | 0.95 | 0.90 | **0.95** |
-| Donut | 0.87 | **0.87** | 0.90 | 0.89 | 0.88 | **0.88** |
-| Edge-Loc | 0.73 | **0.90** | 0.92 | 0.85 | 0.82 | **0.87** |
-| Edge-Ring | 0.98 | 0.98 | 0.98 | 0.98 | 0.98 | **0.98** |
-| Loc | 0.64 | **0.77** | 0.88 | 0.84 | 0.74 | **0.80** |
-| Near-full | 1.00 | **0.91** | 0.87 | 0.97 | 0.93 | **0.94** |
-| Random | 0.79 | **0.87** | 0.97 | 0.92 | 0.87 | **0.90** |
-| Scratch | 0.55 | **0.77** | 0.92 | 0.87 | 0.69 | **0.81** |
-| none | 1.00 | 0.99 | 0.97 | 0.99 | 0.98 | **0.99** |
+| Class | Prec (TTA+τ) | Rec (TTA+τ) | F1 (TTA+τ) |
+|---|---|---|---|
+| Center | 0.95 | 0.95 | **0.95** |
+| Edge-Ring | 0.98 | 0.98 | **0.98** |
+| none | 0.99 | 0.99 | **0.99** |
+| Near-full | 0.90 | 0.93 | **0.92** |
+| Random | 0.83 | 0.91 | **0.87** |
+| Edge-Loc | 0.82 | 0.89 | **0.86** |
+| Scratch | 0.73 | 0.87 | **0.79** |
+| Loc | 0.75 | 0.82 | **0.78** |
+| Donut | 0.68 | 0.95 | **0.79** |
+| **Macro avg** | **0.85** | **0.92** | **0.88** |
 
 Key observations:
-- Scratch precision: 0.55 → 0.77 (+22 pp) — the primary improvement target
-- The precision gains come at a small recall cost: uncertain predictions that
-  previously committed to a defect class now fall through to "none" (visible in
-  the confusion matrix: Edge-Loc has 10% spill into "none" at τ=0.87)
-- This trade-off is tunable: lower the per-class τ to recover recall at the cost
-  of precision
+- Scratch precision lifted from ~0.55 → 0.73 (+18 pp) via per-class threshold τ=0.84
+- Donut precision (0.68) is the weakest point — only 111 test samples, high variance
+- The precision gains come at a small recall cost: uncertain predictions fall through
+  to "none" rather than committing to a defect class
+- This trade-off is tunable: lower the per-class τ to recover recall at the cost of precision
 
 ---
 
 ## 4. Calibration
 
-**ECE before temperature scaling:** 0.0067
-**Temperature T:** 1.1036
-**ECE after temperature scaling:** 0.0034
+**ECE before temperature scaling:** 0.0098
+**Temperature T:** 1.1344
+**ECE after temperature scaling:** 0.0033
 
 A well-calibrated model is essential for operational decisions. When the model
 outputs P(Edge-Ring) = 0.95, an operator should be able to trust that confidence
@@ -141,9 +142,9 @@ well-balanced val set already provides implicit calibration pressure.
 
 ## 5. Cost-of-quality error analysis
 
-**Escapes (defect predicted as none):** 59 out of 4,917 defect test samples (1.2 %)
-**False alarms (none predicted as defect):** 917 out of 29,581 none test samples (3.1 %)
-**Cost-weighted error (10:1 assumption):** 0.0436
+**Escapes (defect predicted as none):** 53 out of 4,917 defect test samples (1.0 %)
+**False alarms (none predicted as defect):** 1,101 out of 29,581 none test samples (3.7 %)
+**Cost-weighted error (10:1 assumption):** 0.0472
 
 This reframing separates two error types that have very different operational costs:
 
@@ -166,14 +167,14 @@ cost-of-quality requirements rather than accepting whatever threshold maximises 
 | Class | τ | Interpretation |
 |---|---|---|
 | none | 0.05 | Model is almost always confident on clean wafers — any prediction accepted |
-| Near-full | 0.05 | Visually unmistakable — no threshold needed |
-| Edge-Ring | 0.66 | Model reaches high confidence reliably |
-| Donut | 0.66 | Similar |
-| Loc | 0.75 | More uncertain — requires higher confidence |
-| Center | 0.83 | Model makes many borderline Center predictions |
-| Scratch | **0.85** | Primary improvement target — model was predicting Scratch at 15–84% confidence |
-| Edge-Loc | 0.87 | Highest threshold — the most confused class |
-| Random | 0.88 | Scattered-failure pattern is genuinely ambiguous |
+| Donut | 0.05 | Low threshold — model is generally confident here |
+| Edge-Ring | 0.52 | Model reaches high confidence reliably |
+| Random | 0.66 | Scattered-failure pattern — moderate threshold |
+| Edge-Loc | 0.73 | Confused class — requires meaningful confidence |
+| Loc | 0.76 | Off-center cluster is genuinely ambiguous |
+| Near-full | 0.76 | High-confidence pattern when present |
+| Center | 0.86 | Model makes many borderline Center predictions |
+| Scratch | **0.84** | Primary improvement target — requires high confidence before committing |
 
 High thresholds for Scratch and Edge-Loc are the expected outcome given their low
 baseline precision. Predictions below τ fall through to the next-highest class

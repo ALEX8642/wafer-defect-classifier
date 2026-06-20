@@ -4,9 +4,9 @@ ResNet-18 trained on the public **WM-811K** wafer map dataset. 9-class spatial
 defect classification with calibrated confidence, Grad-CAM interpretability, and
 a one-click Gradio demo.
 
-**Macro-F1 0.90 · Balanced accuracy 0.92 · ECE 0.0034 (after temperature scaling)**
+**Macro-F1 0.88 · Balanced accuracy 0.92 · ECE 0.0033 (after temperature scaling)**
 
-*Baseline without TTA: macro-F1 0.87. No retraining — improvement from test-time augmentation over the D4 symmetry group and per-class confidence thresholds tuned on the val set.*
+*Baseline without TTA + thresholds: macro-F1 ~0.87. Improvement from test-time augmentation over the D4 symmetry group and per-class confidence thresholds — no retraining required.*
 
 ---
 
@@ -19,13 +19,13 @@ a one-click Gradio demo.
 | Edge-Ring | 0.98 | 0.98 | **0.98** |
 | none | 0.99 | 0.99 | **0.99** |
 | Center | 0.95 | 0.95 | **0.95** |
-| Near-full | 0.91 | 0.97 | **0.94** |
-| Random | 0.87 | 0.92 | **0.90** |
-| Edge-Loc | 0.90 | 0.85 | **0.87** |
-| Donut | 0.87 | 0.89 | **0.88** |
-| Scratch | 0.77 | 0.87 | **0.81** |
-| Loc | 0.77 | 0.84 | **0.80** |
-| **Macro avg** | **0.89** | **0.92** | **0.90** |
+| Near-full | 0.90 | 0.93 | **0.92** |
+| Random | 0.83 | 0.91 | **0.87** |
+| Edge-Loc | 0.82 | 0.89 | **0.86** |
+| Scratch | 0.73 | 0.87 | **0.79** |
+| Loc | 0.75 | 0.82 | **0.78** |
+| Donut | 0.68 | 0.95 | **0.79** |
+| **Macro avg** | **0.85** | **0.92** | **0.88** |
 
 <details>
 <summary>Baseline (single-pass, argmax only)</summary>
@@ -49,9 +49,10 @@ Plain accuracy (0.98) is suppressed — a constant "none" predictor scores 0.85
 while catching zero defects. Macro-F1 and balanced accuracy are the right metrics
 under 85% class imbalance.
 
-**Improvement without retraining:** +3.6 pp macro-F1 (0.8662 → 0.9025) via
-test-time augmentation (D4 group, 8 views) and per-class confidence thresholds
-tuned on the validation set. Scratch precision: 0.55 → 0.77 (+22 pp).
+**Improvement without retraining:** TTA (D4 group, 8 views) and per-class
+confidence thresholds lift macro-F1 from the single-pass baseline. Scratch
+precision improves from 0.55 → 0.73 (+18 pp) by requiring higher confidence
+before committing to rare-class predictions.
 
 ---
 
