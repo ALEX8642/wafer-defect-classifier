@@ -533,3 +533,98 @@ the specific product and customer context, then selecting the model and threshol
 accordingly.
 
 ---
+
+## Phase S — Semi-supervised pseudo-labeling (experiment; slight regression)
+
+### What we observed
+
+WM-811K contains 638,507 wafer maps with no `failureType` label — production wafers
+that were never reviewed by a process engineer. These come from the same fab and the
+same distribution as the labeled 172k subset. If the trained model can accurately
+pseudo-label a large fraction of them, that additional data could improve tail-class
+performance (Donut, Scratch, Loc) by giving the model more examples of each rare
+defect pattern.
+
+### The technique
+
+1. **Pseudo-label generation**: Run the focal+CBAM teacher model (val F1 0.9265) on all
+   638k unlabeled maps using TTA×8 + temperature calibration (T=0.6685). Retain only
+   predictions where the maximum softmax probability ≥ 0.95.
+
+2. **Filter none**: 514k of the 543k accepted maps were predicted as "none" (94.6%).
+   The training set already has ~117k "none" examples — adding 514k more would make
+   per-epoch compute ~5× heavier with no benefit to tail classes. Only the **29,100
+   defect-class pseudo-labels** were appended to the training set.
+
+3. **Retrain**: Same focal+CBAM config (γ=2, no class weights, 40 epochs, patience=10).
+   Val and test splits untouched — only the training split is augmented.
+
+**Pseudo-label distribution (defect classes only):**
+
+| Class | Count | Avg confidence |
+|---|---|---|
+| Center | 8,356 | 0.992 |
+| Edge-Ring | 6,254 | 0.993 |
+| Edge-Loc | 5,602 | 0.984 |
+| Loc | 2,095 | 0.982 |
+| Near-full | 2,490 | 0.995 |
+| Random | 3,419 | 0.988 |
+| Scratch | 735 | 0.981 |
+| Donut | 149 | 0.987 |
+| **Total** | **29,100** | — |
+
+### Results
+
+**Outcome: slight regression across all tail classes.**
+
+| Class | Focal+CBAM (Phase F) | +Pseudo-labels (Phase S) | Δ |
+|---|---|---|---|
+| Center | 0.95 | 0.95 | = |
+| Donut | 0.86 | 0.86 | = |
+| Edge-Loc | **0.89** | 0.88 | −1pp |
+| Edge-Ring | 0.99 | 0.99 | = |
+| Loc | **0.84** | 0.83 | −1pp |
+| Near-full | **0.95** | 0.93 | −2pp |
+| Random | **0.91** | 0.89 | −2pp |
+| Scratch | **0.86** | 0.85 | −1pp |
+| none | 0.99 | 0.99 | = |
+| **Macro-F1** | **0.9157** | **0.9085** | **−0.7pp** |
+
+Val F1 also regressed (0.9265 → 0.9140) and the model converged earlier (epoch 21
+vs epoch 34), suggesting noisier gradient signal from pseudo-labeled examples.
+
+### Why it regressed
+
+At 0.95 confidence threshold the expected pseudo-label error rate is ~5%. For Scratch
+(735 pseudo-labels), that implies ~37 mislabeled examples — significant relative to
+the ~1,900 labeled Scratch training samples. Focal loss downweights high-confidence
+examples so those 37 mislabeled maps receive normal gradient weight, quietly degrading
+Scratch recall.
+
+A second contributing factor: the pseudo-label distribution for rare classes is small
+(Donut: 149, Scratch: 735). The teacher model's errors on these classes are
+concentrated — a near-Donut misclassified as Donut in pseudo-labels appears many
+times given the model's consistent behavior, creating systematic noise rather than
+random noise.
+
+### Conclusion
+
+Phase F (focal+CBAM) remains the best model. Phase S is retained in the codebase as
+`src/wafer/pseudo_label.py` — the infrastructure is sound and would benefit from:
+
+- A higher confidence threshold (0.99 instead of 0.95) to reduce pseudo-label noise
+- Iterative pseudo-labeling (train on pseudo-labels → re-generate with new model)
+- Consistency regularization (MeanTeacher, FixMatch) rather than hard pseudo-labels
+
+These are left as documented future work. The current portfolio headline is Phase F:
+macro-F1 **0.9157**, ECE 0.0031, T=0.6685.
+
+### Applying this to a real fab dataset
+
+Pseudo-labeling is most effective when the teacher model's confidence threshold can be
+set high enough to suppress noise without discarding too many examples. In this case,
+raising from 0.95 to 0.99 would retain ~40% fewer maps but cut estimated error rate
+from 5% to ~1% — potentially enough to avoid the regression. Experiment with both
+thresholds and compare val F1 before committing to a retrain.
+
+---

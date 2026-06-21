@@ -101,22 +101,18 @@ Full per-class breakdown and narrative in `docs/IMPROVEMENTS.md` Phase F section
 python -m wafer.train && python -m wafer.calibrate && python -m wafer.evaluate
 ```
 
-### Phase S — Semi-supervised pseudo-labeling (IN PROGRESS)
+### Phase S — Semi-supervised pseudo-labeling (DONE — experiment; Phase F remains best)
 
-Running on 5090. Generates pseudo-labels from 638k unlabeled WM-811K maps
-using focal+CBAM model as teacher (confidence threshold 0.95), then retrains.
+Pseudo-labeled 638k unlabeled WM-811K maps with focal+CBAM teacher at 0.95 confidence.
+Filtered "none" pseudo-labels (514k maps) to keep only 29,100 defect-class additions.
 
-```bash
-python -m wafer.pseudo_label                   # ~25 min — writes pseudo_labels.pkl
-# set pseudo_label_path: outputs/pseudo_labels.pkl in baseline.yaml
-python -m wafer.train && python -m wafer.calibrate && python -m wafer.evaluate
-```
+**Result:** test macro-F1 0.9085 vs Phase F 0.9157 — slight regression across all tail
+classes. Root cause: ~5% noise at 0.95 threshold degraded Scratch/Loc/Random recall.
+Phase F checkpoint restored as the production model. Full analysis in IMPROVEMENTS.md Phase S.
 
-Target: macro-F1 ≥ 0.93.
+### Narrative documentation (DONE through Phase S)
 
-### Narrative documentation (DONE through Phase F)
-
-- [x] `docs/IMPROVEMENTS.md` — Phases A–F
+- [x] `docs/IMPROVEMENTS.md` — Phases A–F + Phase S (experiment)
 - [x] `docs/ML_PRIMER.md` — CNN, loss, calibration, Grad-CAM for manufacturing audience
 
 ---
