@@ -263,11 +263,21 @@ def generate_cam_examples(
     class_to_idx: dict = ckpt["class_to_idx"]
     idx_to_class = {v: k for k, v in class_to_idx.items()}
 
+    saved_cfg = ckpt.get("cfg", {})
+    cfg.cbam = bool(saved_cfg.get("cbam", cfg.cbam))
+    cfg.cbam_reduction = int(saved_cfg.get("cbam_reduction", cfg.cbam_reduction))
+
     model = build_model(cfg, num_classes=len(class_to_idx)).to(cfg.device)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
 
-    target_layer = model.layer4[-1]
+    # With CBAM, layer4 is Sequential(BasicBlock, BasicBlock, CBAM).
+    # Grad-CAM target must be the last BasicBlock, not the CBAM attention module.
+    from wafer.model import CBAM as _CBAM
+    target_layer = next(
+        m for m in reversed(list(model.layer4.children()))
+        if not isinstance(m, _CBAM)
+    )
     cam_cls = GradCAMPlusPlus if method == "gradcampp" else GradCAM
     print(f"  Method: {cam_cls.__name__}")
 

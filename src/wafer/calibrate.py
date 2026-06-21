@@ -339,6 +339,11 @@ def calibrate(cfg: WaferConfig, checkpoint_path: Path | None = None) -> None:
     ckpt = torch.load(checkpoint_path, map_location=cfg.device, weights_only=False)
     class_to_idx: dict = ckpt["class_to_idx"]
 
+    # Honour architecture flags from the checkpoint so keys always match.
+    saved_cfg = ckpt.get("cfg", {})
+    cfg.cbam = bool(saved_cfg.get("cbam", cfg.cbam))
+    cfg.cbam_reduction = int(saved_cfg.get("cbam_reduction", cfg.cbam_reduction))
+
     model = build_model(cfg, num_classes=len(class_to_idx)).to(cfg.device)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()

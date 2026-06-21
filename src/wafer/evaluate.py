@@ -132,6 +132,12 @@ def evaluate(cfg: WaferConfig, checkpoint_path: Path | None = None) -> None:
     num_classes  = len(class_to_idx)
     class_names  = [idx_to_class[i] for i in range(num_classes)]
 
+    # Honour architecture flags from the checkpoint so keys always match,
+    # even if baseline.yaml was edited between training and evaluation.
+    saved_cfg = ckpt.get("cfg", {})
+    cfg.cbam = bool(saved_cfg.get("cbam", cfg.cbam))
+    cfg.cbam_reduction = int(saved_cfg.get("cbam_reduction", cfg.cbam_reduction))
+
     model = build_model(cfg, num_classes=num_classes).to(cfg.device)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
