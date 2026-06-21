@@ -117,6 +117,13 @@ def train(cfg: WaferConfig) -> None:
         json.dump(class_to_idx, f, indent=2)
 
     model = build_model(cfg).to(device)
+    if getattr(cfg, "backbone_ckpt_path", ""):
+        bb_ckpt = torch.load(cfg.backbone_ckpt_path, map_location=device, weights_only=False)
+        missing, unexpected = model.load_state_dict(bb_ckpt["backbone_state_dict"], strict=False)
+        n_loaded = len(bb_ckpt["backbone_state_dict"]) - len(missing)
+        print(f"Pretrained backbone: loaded {n_loaded} tensors from {cfg.backbone_ckpt_path}"
+              f"  (missing={len(missing)}, unexpected={len(unexpected)})")
+
     if cfg.loss == "focal":
         criterion = FocalLoss(gamma=cfg.focal_gamma)
         print(f"Loss: FocalLoss (γ={cfg.focal_gamma}, no class weights — focal handles imbalance)")

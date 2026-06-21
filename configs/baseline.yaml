@@ -36,3 +36,6 @@ cbam_reduction: 16           # channel reduction ratio inside CBAM MLP
 
 # Phase S — semi-supervised pseudo-labeling (run pseudo_label.py first, then set path)
 pseudo_label_path: ""        # path to pseudo_labels.pkl; empty = disabled
+
+# wafer-ssl Phase P — self-supervised pretraining (set after running wafer-ssl pretrain.py)
+backbone_ckpt_path: ""       # path to pretrained_backbone.pt; empty = random init (default)

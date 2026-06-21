@@ -89,6 +89,9 @@ class WaferConfig:
     # --- semi-supervised (Phase S pseudo-labeling) ---
     pseudo_label_path: str = ""    # path to pseudo_labels.pkl; empty = disabled
 
+    # --- self-supervised pretraining (wafer-ssl Phase P) ---
+    backbone_ckpt_path: str = ""   # path to pretrained_backbone.pt; empty = random init
+
     def __post_init__(self) -> None:
         self.data_root = _anchor(Path(self.data_root))
         self.output_dir = _anchor(Path(self.output_dir))
@@ -166,4 +169,6 @@ def build_arg_parser(description: str = "wafer classifier") -> argparse.Argument
                    help="CBAM channel reduction ratio (default 16)")
     p.add_argument("--pseudo-label-path", dest="pseudo_label_path", type=str, default=None,
                    help="Path to pseudo_labels.pkl; appends to training split")
+    p.add_argument("--backbone-ckpt-path", dest="backbone_ckpt_path", type=str, default=None,
+                   help="Path to pretrained_backbone.pt from wafer-ssl; empty = random init")
     return p
