@@ -119,10 +119,23 @@ def train(cfg: WaferConfig) -> None:
     model = build_model(cfg).to(device)
     if getattr(cfg, "backbone_ckpt_path", ""):
         bb_ckpt = torch.load(cfg.backbone_ckpt_path, map_location=device, weights_only=False)
-        missing, unexpected = model.load_state_dict(bb_ckpt["backbone_state_dict"], strict=False)
-        n_loaded = len(bb_ckpt["backbone_state_dict"]) - len(missing)
-        print(f"Pretrained backbone: loaded {n_loaded} tensors from {cfg.backbone_ckpt_path}"
-              f"  (missing={len(missing)}, unexpected={len(unexpected)})")
+        bb_state = bb_ckpt["backbone_state_dict"]
+        missing, unexpected = model.load_state_dict(bb_state, strict=False)
+        # Actually-loaded = source keys that the model accepted = source - unexpected.
+        # (len(source) - len(missing) is WRONG: 'missing' counts model keys absent
+        #  from the source, which inflates the count when keys don't line up.)
+        n_loaded = len(bb_state) - len(unexpected)
+        print(f"Pretrained backbone: loaded {n_loaded}/{len(bb_state)} tensors from "
+              f"{cfg.backbone_ckpt_path}  (missing={len(missing)}, unexpected={len(unexpected)})")
+        # Guard: if the architecture of the pretrained backbone doesn't match the
+        # fine-tune model (e.g. cbam mismatch nests/renames keys), almost nothing
+        # loads and the pretraining is silently wasted. Fail loud instead.
+        if n_loaded < 0.5 * len(bb_state):
+            raise RuntimeError(
+                f"Only {n_loaded}/{len(bb_state)} pretrained tensors matched the model. "
+                f"Architecture mismatch (likely cbam flag differs between pretrain and "
+                f"fine-tune). Pretrain with the SAME cbam setting as baseline.yaml."
+            )
 
     if cfg.loss == "focal":
         criterion = FocalLoss(gamma=cfg.focal_gamma)
