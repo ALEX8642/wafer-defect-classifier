@@ -200,6 +200,7 @@ def load_and_split(cfg: WaferConfig) -> Tuple[
                   (_Path(__file__).resolve().parents[2] / pseudo_path)
         if pl_path.exists():
             df_pseudo = pd.read_pickle(pl_path)[["waferMap", "label"]]
+            df_pseudo = df_pseudo[df_pseudo["label"] != "none"]  # none already dominant; keep defect pseudo-labels only
             n_before = len(df_train)
             df_train = pd.concat([df_train, df_pseudo], ignore_index=True)
             print(f"Pseudo-labels: +{len(df_pseudo):,} rows appended to train "
