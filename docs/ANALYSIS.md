@@ -300,6 +300,54 @@ false alarms; in a cost-sensitive line, raise the confidence threshold for Scrat
 
 ---
 
+## 9. Comparison to VLM-based approaches
+
+NVIDIA published a Cosmos Reason 1-7B fine-tuning recipe for WM-811K wafer map
+classification reporting **96.8% accuracy** ([Cosmos Cookbook, 2025](https://nvidia-cosmos.github.io/cosmos-cookbook/recipes/post_training/reason1/wafermap_classification/post_training.html)).
+This appears to outperform the 0.9157 macro-F1 result here, but the setups are not
+directly comparable.
+
+**What NVIDIA actually evaluated:**
+
+| | NVIDIA Cosmos Reason 1-7B | This project (ResNet-18) |
+|---|---|---|
+| Model size | **7 billion parameters** | 11.2 million parameters (636× smaller) |
+| Training data | 800 images (100/class, hand-curated) | 121k labeled maps (full split, imbalanced) |
+| Classes | **8** (none excluded) | **9** (none included at 85% frequency) |
+| Primary metric | Accuracy | Macro-F1 |
+| Zero-shot | 14.37% | — |
+
+Three methodological differences inflate the NVIDIA number relative to the harder
+production problem:
+
+1. **"none" is excluded.** Removing the 85%-dominant class makes the problem
+   approximately balanced across 8 classes. Any model—including a uniform random
+   classifier—would score 12.5% accuracy. On the real 9-class distribution, a
+   model predicting "none" everywhere scores 85% accuracy while catching zero defects.
+   Macro-F1 is the correct metric because it weights each class equally regardless
+   of frequency.
+
+2. **100 examples per class, not the real distribution.** WM-811K has 149 Near-full
+   samples total; Donut has 555. The 100-per-class curated subset evaluates on a
+   balanced test set that does not reflect production wafer volumes.
+
+3. **Scale mismatch.** Cosmos Reason 1-7B is a 7-billion-parameter vision-language
+   model. Its zero-shot accuracy of 14.37% on wafer maps (barely above random chance
+   for 8 classes) reveals that large VLMs have minimal innate understanding of binary
+   spatial defect patterns — the 96.8% result is almost entirely from fine-tuning,
+   not from pretraining. A 636× larger model fine-tuned on balanced data is not the
+   right comparison for a production deployment decision.
+
+**Takeaway for deployment.** A ResNet-18 trained on the full imbalanced distribution,
+evaluated with macro-F1, is the production-realistic setup. The NVIDIA result
+demonstrates that instruction-tuned VLMs can be adapted to this domain, which is
+useful for low-data scenarios (few-shot fine-tuning with minimal labeled examples).
+The two approaches answer different questions: ResNet-18 answers "what do I deploy
+at inference time on fab hardware?" — Cosmos Reason 1-7B answers "what can a
+foundation model learn from a small curated sample?"
+
+---
+
 ## References
 
 [1] M.-J. Wu, J.-S. R. Jang, J.-L. Chen, "Wafer Map Failure Pattern Recognition
