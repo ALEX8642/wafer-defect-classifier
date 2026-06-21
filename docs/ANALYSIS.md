@@ -130,8 +130,8 @@ the confidence to match empirical accuracy. A T > 1 indicates the model was
 overconfident (common in deep networks without regularisation); T < 1 indicates
 underconfidence.
 
-T = 1.10 confirms mild overconfidence — typical of a network trained from random
-initialisation without dropout. Temperature scaling halved the ECE (0.0067 → 0.0034),
+T = 1.1344 confirms mild overconfidence — typical of a network trained from random
+initialisation without dropout. Temperature scaling reduced the ECE (0.0098 → 0.0033),
 a strong improvement for a single-parameter correction. Both ECE values are low in
 absolute terms (sub-1 % miscalibration), reflecting that class-weighted CE with a
 well-balanced val set already provides implicit calibration pressure.

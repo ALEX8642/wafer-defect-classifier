@@ -82,6 +82,10 @@ class WaferConfig:
     loss: str = "ce"               # ce | focal
     focal_gamma: float = 2.0       # focal loss concentration parameter
 
+    # --- attention (Phase E CBAM) ---
+    cbam: bool = False             # append CBAM after each ResNet stage
+    cbam_reduction: int = 16       # channel reduction ratio inside CBAM
+
     def __post_init__(self) -> None:
         self.data_root = _anchor(Path(self.data_root))
         self.output_dir = _anchor(Path(self.output_dir))
@@ -153,4 +157,8 @@ def build_arg_parser(description: str = "wafer classifier") -> argparse.Argument
     p.add_argument("--loss", type=str, default=None, help="ce | focal")
     p.add_argument("--focal-gamma", dest="focal_gamma", type=float, default=None,
                    help="Focal loss γ parameter (default 2.0)")
+    p.add_argument("--cbam", action="store_true", default=None,
+                   help="Append CBAM attention after each ResNet stage")
+    p.add_argument("--cbam-reduction", dest="cbam_reduction", type=int, default=None,
+                   help="CBAM channel reduction ratio (default 16)")
     return p

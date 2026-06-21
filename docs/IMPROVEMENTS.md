@@ -315,7 +315,7 @@ python -m wafer.evaluate
 
 The corrected focal loss implementation is in `src/wafer/train.py` and is ready
 to run. The active checkpoint (`outputs/best.pt`) is the CE baseline, which with
-TTA + per-class thresholds gives macro-F1 0.9025 — a strong result. The focal
+TTA + per-class thresholds gives macro-F1 0.8811 — a strong result. The focal
 retraining experiment is documented here as a planned next step.
 
 **Expected outcome with corrected implementation:** Literature and the reasoning

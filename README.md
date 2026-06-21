@@ -118,14 +118,14 @@ unchanged; head replaced with a 9-class linear layer.
 `sklearn.compute_class_weight('balanced')`. Directly encodes the domain intuition:
 an escaped defect costs more than a false alarm.
 
-**Calibration**: Temperature scaling (T=1.10, fit on val set via LBFGS). Halves ECE
-(0.0067 → 0.0034). T > 1 confirms mild overconfidence typical of from-scratch
+**Calibration**: Temperature scaling (T=1.1344, fit on val set via LBFGS). Reduces ECE
+(0.0098 → 0.0033). T > 1 confirms mild overconfidence typical of from-scratch
 training.
 
 **Cost-of-quality framing**: Two error types with different operational costs —
 escape (defect predicted as none) vs. false alarm (none predicted as defect).
-At the default threshold: 59 escapes (1.2% of defect samples), 917 false alarms
-(3.1% of none samples), cost-weighted error 0.0436 at 10:1 escape/FA cost ratio.
+With TTA + per-class thresholds: 53 escapes (1.0% of defect samples), 1101 false alarms
+(3.7% of none samples), cost-weighted error 0.0472 at 10:1 escape/FA cost ratio.
 Threshold sensitivity plot shows how the operating point shifts across τ ∈ [0.05, 0.99].
 
 ---
