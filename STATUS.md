@@ -14,16 +14,18 @@ Last updated: 2026-06-20
 
 ## Current headline numbers
 
-**Checkpoint:** `outputs/best.pt` — epoch 27, val macro-F1 0.8627  
-**Test set (TTA×8 + per-class τ):** macro-F1 **0.8811**, balanced accuracy 0.9213  
-**Calibration:** T=1.1344, ECE 0.0098→0.0033  
-**Cost-weighted error:** 0.0472 (53 escapes, 1101 false alarms, 10:1 assumption)
+**Checkpoint:** `outputs/best.pt` — epoch 34, val macro-F1 0.9265 (focal loss + CBAM, 5090)
+**Test set (TTA×8 + per-class τ):** macro-F1 **0.9157**, balanced accuracy 0.9085
+**Calibration:** T=0.6685, ECE 0.0164→0.0031
+**Cost-weighted error:** 0.0835 (275 escapes, 137 false alarms, 10:1 assumption)
 
-*Note on reproducibility: CUDA floating-point non-determinism means training results
-vary slightly between sessions even with seed=42. The original Phase 1 run achieved
-val F1 0.8732 / test macro-F1 0.8662; the current checkpoint has val F1 0.8627.
-To lock results across runs, add `torch.backends.cudnn.deterministic = True` and
-`torch.backends.cudnn.benchmark = False` to `train.py` — accepted ~5% speed cost.*
+*Note on cost-weighted error: focal loss without class weights trades escape rate
+for false-alarm rate relative to the CE baseline (54 escapes / 990 FA → 0.0442).
+The macro-F1 improvement is real (+2pp) but the escape/FA operating point shifted.
+See IMPROVEMENTS.md Phase F for full analysis.*
+
+*Note on reproducibility: `set_seed()` now sets `cudnn.deterministic=True` and
+`benchmark=False`. Results are locked across sessions with seed=42.*
 
 ---
 
@@ -34,7 +36,7 @@ To lock results across runs, add `torch.backends.cudnn.deterministic = True` and
 - [x] **A1 — TTA**: `tta_predict()` in evaluate.py; D4 group (8 transforms); `tta: true` in baseline.yaml
 - [x] **A2 — Per-class thresholds**: `tune_thresholds()` in calibrate.py → `outputs/thresholds.json`
 
-Measured: macro-F1 0.8811, Scratch precision 0.55→0.73 (+18 pp).
+Measured on CE baseline: macro-F1 0.8952 (5090), Scratch precision 0.55→0.73 (+18 pp).
 
 ```bash
 python -m wafer.calibrate       # writes temperature.json + thresholds.json
@@ -53,27 +55,10 @@ python -m wafer.evaluate        # TTA + thresholds active
 pip install pytest && pytest tests/ -v      # no GPU or LSWMD.pkl required
 ```
 
-### Phase C — Focal loss retraining (NEGATIVE RESULT — documented)
+### Phase C — Focal loss retraining (NEGATIVE RESULT → FIXED, see Phase F)
 
-**What happened:** Focal loss with class weights combined (first attempt) peaked at
-val macro-F1 0.7303 after 40 epochs — significantly worse than CE baseline 0.8627.
-Root cause: double-penalization (class weights + focal modulator both address
-imbalance; combining them destabilises early training).
-
-**Fix in code:** `FocalLoss` in `train.py` no longer accepts class weights — the
-focal modulator handles imbalance directly. This corrected version is ready to run.
-
-**To try corrected focal loss retraining:**
-```bash
-# Edit configs/baseline.yaml: loss: focal, num_epochs: 40, patience: 10
-python -m wafer.train
-python -m wafer.calibrate
-python -m wafer.evaluate
-```
-
-**Expected:** With corrected implementation, focal should converge in ~30–40 epochs
-to at or above the CE baseline. Whether it beats TTA+thresholds is an open question.
-
+**First attempt failed:** Focal + class weights combined → val macro-F1 0.7303 (double-penalization bug).
+**Corrected focal loss** (no class weights) validated in Phase F combined with CBAM.
 Full experiment post-mortem in `docs/IMPROVEMENTS.md` Phase C section.
 
 ### Phase D — Grad-CAM++ overlays (DONE)
@@ -87,10 +72,51 @@ Full experiment post-mortem in `docs/IMPROVEMENTS.md` Phase C section.
 python -m wafer.explain --method gradcampp    # regenerate overlay PNGs
 ```
 
-### Narrative documentation (DONE)
+### Phase E1 — Deterministic training mode (DONE)
 
-- [x] `docs/IMPROVEMENTS.md` — full story: Phase A (TTA + thresholds), Phase B (tests),
-  Phase C (focal loss experiment + post-mortem), Phase D (Grad-CAM++)
+`set_seed()` in `train.py` now sets `torch.backends.cudnn.deterministic = True`
+and `torch.backends.cudnn.benchmark = False`. Results locked across GPU sessions.
+
+### Phase F — Focal loss (corrected) + CBAM attention (DONE)
+
+**What changed:** Combined two improvements in one training run:
+- Corrected focal loss (γ=2.0, no class weights) — validated after Phase C post-mortem
+- CBAM attention after each ResNet stage (43.9k extra parameters, 0.4% overhead)
+
+**Results (5090, 40 epochs):**
+
+| Metric | CE baseline | Focal + CBAM |
+|--------|-------------|-------------|
+| Val macro-F1 | 0.8713 | **0.9265** |
+| Test macro-F1 | 0.8952 | **0.9157** |
+| Loc F1 | 0.79 | **0.84** (+5pp) |
+| Scratch F1 | 0.82 | **0.86** (+4pp) |
+| Random F1 | 0.87 | **0.91** (+4pp) |
+| Edge-Loc F1 | 0.87 | **0.89** (+2pp) |
+
+Full per-class breakdown and narrative in `docs/IMPROVEMENTS.md` Phase F section.
+
+```bash
+# To replicate: in configs/baseline.yaml set loss: focal, cbam: true, num_epochs: 40
+python -m wafer.train && python -m wafer.calibrate && python -m wafer.evaluate
+```
+
+### Phase S — Semi-supervised pseudo-labeling (IN PROGRESS)
+
+Running on 5090. Generates pseudo-labels from 638k unlabeled WM-811K maps
+using focal+CBAM model as teacher (confidence threshold 0.95), then retrains.
+
+```bash
+python -m wafer.pseudo_label                   # ~25 min — writes pseudo_labels.pkl
+# set pseudo_label_path: outputs/pseudo_labels.pkl in baseline.yaml
+python -m wafer.train && python -m wafer.calibrate && python -m wafer.evaluate
+```
+
+Target: macro-F1 ≥ 0.93.
+
+### Narrative documentation (DONE through Phase F)
+
+- [x] `docs/IMPROVEMENTS.md` — Phases A–F
 - [x] `docs/ML_PRIMER.md` — CNN, loss, calibration, Grad-CAM for manufacturing audience
 
 ---
@@ -101,11 +127,12 @@ python -m wafer.explain --method gradcampp    # regenerate overlay PNGs
 cd /home/waferclassifier/wafer-defect-classifier
 source .venv/bin/activate
 
-python -m wafer.train       # ~10 min on 4090 (uses .venv/bin/python, not system python)
-python -m wafer.calibrate   # temperature + thresholds
-python -m wafer.evaluate    # test metrics
-python -m wafer.demo        # Gradio demo → localhost:7860
-python -m wafer.demo --share  # public URL
+python -m wafer.train          # ~15 min on 5090 (focal+CBAM, 40 epochs)
+python -m wafer.calibrate      # temperature + thresholds
+python -m wafer.evaluate       # test metrics
+python -m wafer.pseudo_label   # generate pseudo-labels from unlabeled maps
+python -m wafer.demo           # Gradio demo → localhost:7860
+python -m wafer.demo --share   # public URL
 ```
 
 **Important:** Always activate `.venv` before running. System python3 does not have

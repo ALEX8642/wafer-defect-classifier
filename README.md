@@ -4,44 +4,44 @@ ResNet-18 trained on the public **WM-811K** wafer map dataset. 9-class spatial
 defect classification with calibrated confidence, Grad-CAM interpretability, and
 a one-click Gradio demo.
 
-**Macro-F1 0.88 · Balanced accuracy 0.92 · ECE 0.0033 (after temperature scaling)**
+**Macro-F1 0.92 · Balanced accuracy 0.91 · ECE 0.0031 (after temperature scaling)**
 
-*Baseline without TTA + thresholds: macro-F1 ~0.87. Improvement from test-time augmentation over the D4 symmetry group and per-class confidence thresholds — no retraining required.*
+*CE baseline with TTA + thresholds: macro-F1 0.90. Focal loss retraining + CBAM channel-and-spatial attention adds +2pp across tail classes (Scratch, Loc, Random).*
 
 ---
 
 ## Results
 
-### With TTA + per-class thresholds (no retraining)
+### Focal loss + CBAM + TTA + per-class thresholds
 
 | Class | Precision | Recall | F1 |
 |---|---|---|---|
-| Edge-Ring | 0.98 | 0.98 | **0.98** |
-| none | 0.99 | 0.99 | **0.99** |
-| Center | 0.95 | 0.95 | **0.95** |
-| Near-full | 0.90 | 0.93 | **0.92** |
-| Random | 0.83 | 0.91 | **0.87** |
-| Edge-Loc | 0.82 | 0.89 | **0.86** |
-| Scratch | 0.73 | 0.87 | **0.79** |
-| Loc | 0.75 | 0.82 | **0.78** |
-| Donut | 0.68 | 0.95 | **0.79** |
-| **Macro avg** | **0.85** | **0.92** | **0.88** |
+| Edge-Ring | 0.99 | 0.99 | **0.99** |
+| none | 0.99 | 1.00 | **0.99** |
+| Center | 0.97 | 0.93 | **0.95** |
+| Near-full | 0.97 | 0.93 | **0.95** |
+| Random | 0.91 | 0.91 | **0.91** |
+| Edge-Loc | 0.90 | 0.89 | **0.89** |
+| Scratch | 0.84 | 0.87 | **0.86** |
+| Donut | 0.86 | 0.86 | **0.86** |
+| Loc | 0.90 | 0.79 | **0.84** |
+| **Macro avg** | **0.92** | **0.91** | **0.92** |
 
 <details>
-<summary>Baseline (single-pass, argmax only)</summary>
+<summary>CE baseline (class-weighted CE + TTA + per-class τ)</summary>
 
 | Class | Precision | Recall | F1 |
 |---|---|---|---|
 | Edge-Ring | 0.98 | 0.98 | 0.98 |
-| none | 1.00 | 0.97 | 0.98 |
-| Center | 0.85 | 0.97 | 0.90 |
-| Near-full | 1.00 | 0.87 | 0.93 |
-| Donut | 0.87 | 0.90 | 0.88 |
-| Random | 0.79 | 0.97 | 0.87 |
-| Edge-Loc | 0.73 | 0.92 | 0.82 |
-| Loc | 0.64 | 0.88 | 0.74 |
-| Scratch | 0.55 | 0.92 | 0.69 |
-| **Macro avg** | | | **0.87** |
+| none | 0.99 | 0.99 | 0.99 |
+| Center | 0.95 | 0.94 | 0.95 |
+| Near-full | 0.93 | 0.93 | 0.93 |
+| Random | 0.81 | 0.94 | 0.87 |
+| Edge-Loc | 0.84 | 0.89 | 0.87 |
+| Scratch | 0.73 | 0.92 | 0.82 |
+| Donut | 0.83 | 0.90 | 0.86 |
+| Loc | 0.75 | 0.84 | 0.79 |
+| **Macro avg** | **0.87** | **0.93** | **0.90** |
 
 </details>
 
@@ -49,10 +49,9 @@ Plain accuracy (0.98) is suppressed — a constant "none" predictor scores 0.85
 while catching zero defects. Macro-F1 and balanced accuracy are the right metrics
 under 85% class imbalance.
 
-**Improvement without retraining:** TTA (D4 group, 8 views) and per-class
-confidence thresholds lift macro-F1 from the single-pass baseline. Scratch
-precision improves from 0.55 → 0.73 (+18 pp) by requiring higher confidence
-before committing to rare-class predictions.
+**Improvement stack:** Single-pass baseline ~0.87 → CE + TTA + thresholds 0.90
+→ focal loss + CBAM + TTA + thresholds **0.92**. Each layer is documented in
+`docs/IMPROVEMENTS.md`. Scratch F1 0.69 → 0.82 → 0.86; Loc F1 0.74 → 0.79 → 0.84.
 
 ---
 

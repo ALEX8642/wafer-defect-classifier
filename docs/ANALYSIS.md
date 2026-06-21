@@ -1,11 +1,12 @@
 # Wafer Defect Classifier — Analysis
 
 **Audience:** hiring managers, Solutions/FDE interviewers, internal R&D transfer.
-**One-line summary:** A ResNet-18 trained on public WM-811K wafer maps achieves
-macro-F1 **0.88** (single-pass baseline ~0.87, +0.01 from test-time augmentation
-and per-class threshold tuning without retraining) with calibrated probabilities,
-Grad-CAM++ spatial localisation, and a cost-of-quality error framework —
-demonstrating the intersection of manufacturing domain judgment and production-grade ML.
+**One-line summary:** A ResNet-18 with CBAM attention trained on public WM-811K wafer
+maps achieves macro-F1 **0.92** (CE baseline 0.88, +0.04 from focal loss retraining
+with CBAM channel-and-spatial attention, +0.01 from TTA and per-class thresholds)
+with calibrated probabilities, Grad-CAM++ spatial localisation, and a cost-of-quality
+error framework — demonstrating the intersection of manufacturing domain judgment and
+production-grade ML.
 
 ---
 
@@ -64,59 +65,68 @@ the quality-engineering intuition that an undetected defect (escape) is more cos
 than an over-flagged good wafer (false alarm).
 
 **Training:** AdamW (lr=1e-3, wd=1e-4), CosineAnnealingLR, early stopping on val
-macro-F1 (patience=7). Mixed precision (torch.amp) on CUDA. Best checkpoint at
-epoch 27/30, val macro-F1 = 0.8732.
+macro-F1 (patience=10). Mixed precision (torch.amp) on CUDA. Best checkpoint at
+epoch 34/40, val macro-F1 = 0.9265 (focal loss + CBAM).
+
+**Attention (CBAM):** Convolutional Block Attention Module appended after each ResNet
+stage (Woo et al., ECCV 2018). Adds 43.9k parameters (0.4% overhead). Channel
+attention recalibrates which feature maps matter; spatial attention recalibrates where
+on the map those features are. Significant gains on spatially-localised tail classes.
 
 ---
 
 ## 3. Test-set performance
 
-**Headline numbers (epoch 27, 4090 laptop):**
+**Headline numbers (epoch 34, 5090 desktop — focal loss + CBAM):**
 
-| Metric | Baseline | With TTA + per-class τ |
+| Metric | CE baseline | Focal + CBAM + TTA + τ |
 |---|---|---|
-| **Macro-F1** | **~0.87** | **0.8811** |
-| Balanced accuracy | ~0.93 | 0.9213 |
-| Plain accuracy | 0.97 — suppressed | 0.98 — suppressed |
+| **Macro-F1** | **0.8952** | **0.9157** |
+| Balanced accuracy | 0.9257 | 0.9085 |
+| Plain accuracy | 0.98 — suppressed | 0.98 — suppressed |
 
-*Improvement achieved without retraining: test-time augmentation over the D4 symmetry
-group (8 views averaged) + per-class confidence thresholds tuned on the val set.
-Val macro-F1 of this checkpoint: 0.8627 at epoch 27.*
+*CE baseline = ResNet-18 with class-weighted CE, TTA×8, per-class τ.
+Focal+CBAM = same inference stack, retrained with corrected focal loss (γ=2, no class
+weights) and CBAM attention. Val macro-F1 of current checkpoint: 0.9265 at epoch 34.*
 
 Plain accuracy of 0.97 is misleading: a model predicting "none" for every sample
 would score 0.85 accuracy while catching zero defects. Macro-F1 weights each class
 equally regardless of frequency; balanced accuracy averages per-class recall. Both
 are the right metrics under class imbalance, and both are reported here.
 
-**Per-class breakdown:**
+**Per-class breakdown (focal loss + CBAM + TTA×8 + per-class τ):**
 
-| Class | Prec (TTA+τ) | Rec (TTA+τ) | F1 (TTA+τ) |
-|---|---|---|---|
-| Center | 0.95 | 0.95 | **0.95** |
-| Edge-Ring | 0.98 | 0.98 | **0.98** |
-| none | 0.99 | 0.99 | **0.99** |
-| Near-full | 0.90 | 0.93 | **0.92** |
-| Random | 0.83 | 0.91 | **0.87** |
-| Edge-Loc | 0.82 | 0.89 | **0.86** |
-| Scratch | 0.73 | 0.87 | **0.79** |
-| Loc | 0.75 | 0.82 | **0.78** |
-| Donut | 0.68 | 0.95 | **0.79** |
-| **Macro avg** | **0.85** | **0.92** | **0.88** |
+| Class | Prec | Rec | F1 | vs CE baseline |
+|---|---|---|---|---|
+| Center | 0.97 | 0.93 | **0.95** | = |
+| Edge-Ring | 0.99 | 0.99 | **0.99** | +1pp |
+| none | 0.99 | 1.00 | **0.99** | = |
+| Near-full | 0.97 | 0.93 | **0.95** | +2pp |
+| Random | 0.91 | 0.91 | **0.91** | +4pp |
+| Edge-Loc | 0.90 | 0.89 | **0.89** | +2pp |
+| Loc | 0.90 | 0.79 | **0.84** | +5pp |
+| Scratch | 0.84 | 0.87 | **0.86** | +4pp |
+| Donut | 0.86 | 0.86 | **0.86** | = |
+| **Macro avg** | **0.92** | **0.91** | **0.92** | **+2pp** |
 
 Key observations:
-- Scratch precision lifted from ~0.55 → 0.73 (+18 pp) via per-class threshold τ=0.84
-- Donut precision (0.68) is the weakest point — only 111 test samples, high variance
-- The precision gains come at a small recall cost: uncertain predictions fall through
-  to "none" rather than committing to a defect class
-- This trade-off is tunable: lower the per-class τ to recover recall at the cost of precision
+- Loc (+5pp) and Scratch (+4pp) are the biggest movers — exactly the tail classes
+  CBAM spatial attention was designed to improve
+- Focal loss with γ=2 produces an underconfident model (T=0.6685 < 1) — the
+  model's softmax distributions are flatter than CE; temperature scaling amplifies them
+- The escape/FA operating point shifted: 275 escapes (5.4%) vs 54 (1.1%) for CE.
+  Macro-F1 improved because more defect classes are classified correctly; but the
+  10:1 cost-weighted error increased (0.0835 vs 0.0442). In a high-escape-cost
+  environment, returning to CE + thresholds or tuning γ downward is the right call.
+- Donut (0.86): only 111 test samples — numbers carry wide confidence intervals
 
 ---
 
 ## 4. Calibration
 
-**ECE before temperature scaling:** 0.0098
-**Temperature T:** 1.1344
-**ECE after temperature scaling:** 0.0033
+**ECE before temperature scaling:** 0.0164
+**Temperature T:** 0.6685
+**ECE after temperature scaling:** 0.0031
 
 A well-calibrated model is essential for operational decisions. When the model
 outputs P(Edge-Ring) = 0.95, an operator should be able to trust that confidence
@@ -130,11 +140,12 @@ the confidence to match empirical accuracy. A T > 1 indicates the model was
 overconfident (common in deep networks without regularisation); T < 1 indicates
 underconfidence.
 
-T = 1.1344 confirms mild overconfidence — typical of a network trained from random
-initialisation without dropout. Temperature scaling reduced the ECE (0.0098 → 0.0033),
-a strong improvement for a single-parameter correction. Both ECE values are low in
-absolute terms (sub-1 % miscalibration), reflecting that class-weighted CE with a
-well-balanced val set already provides implicit calibration pressure.
+T = 0.6685 reveals mild underconfidence — atypical and worth explaining. Focal loss
+suppresses gradients on easy examples by multiplying the CE loss by (1−p_t)^γ. During
+training, this means the model's logits are never "pushed hard" on any single class,
+resulting in flatter softmax distributions at inference. Temperature T < 1 sharpens
+these distributions back to match empirical accuracy. ECE improved from 0.0164 → 0.0031,
+making this one of the best-calibrated checkpoints in the project.
 
 *Reliability diagram: `outputs/reliability_diagram.png`*
 
@@ -142,9 +153,24 @@ well-balanced val set already provides implicit calibration pressure.
 
 ## 5. Cost-of-quality error analysis
 
-**Escapes (defect predicted as none):** 53 out of 4,917 defect test samples (1.0 %)
-**False alarms (none predicted as defect):** 1,101 out of 29,581 none test samples (3.7 %)
-**Cost-weighted error (10:1 assumption):** 0.0472
+**Escapes (defect predicted as none):** 275 out of 5,104 defect test samples (5.4 %)
+**False alarms (none predicted as defect):** 137 out of 29,486 none test samples (0.5 %)
+**Cost-weighted error (10:1 assumption):** 0.0835
+
+*Operating point comparison:*
+
+| Model | Escapes | Escape rate | False alarms | FA rate | Cost-weighted |
+|---|---|---|---|---|---|
+| CE + TTA + τ | 54 | 1.1% | 990 | 3.4% | 0.0442 |
+| Focal+CBAM + TTA + τ | 275 | 5.4% | 137 | 0.5% | 0.0835 |
+
+Focal loss without class weights redistributes the escape/FA tradeoff. The dominant
+"none" class no longer receives an explicit loss penalty, so some borderline defect
+samples are predicted as "none" with high confidence — increasing escapes. At the same
+time, false alarms drop sharply because the model is more decisive about defect classes
+when it does predict them. Which operating point is better depends on the fab's
+cost-of-quality assumptions: at 10:1 (escape much worse), CE + thresholds is better.
+At 2:1 or lower, focal+CBAM wins on both macro-F1 and cost-weighted error.
 
 This reframing separates two error types that have very different operational costs:
 

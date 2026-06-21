@@ -422,5 +422,114 @@ If you find Grad-CAM++ still produces diffuse attribution, consider:
 
 ---
 
-*All improvements are tested (`pytest tests/ -v`) and the `docs/ML_PRIMER.md`
-explains the underlying ML concepts for readers coming from a manufacturing background.*
+## Phase F — Focal loss (corrected) + CBAM attention
+
+### What we observed
+
+After the CE baseline with TTA and thresholds reached macro-F1 0.8952, three tail
+classes still lagged: Loc (0.79), Scratch (0.82), Random (0.87). The pattern across
+all three was the same: high recall, low-to-moderate precision. The model could detect
+these defects but confused them with similar-looking classes.
+
+Two root causes:
+1. **Loss focus**: class-weighted CE upweights rare classes by frequency, but treats
+   all samples of a class equally. Hard examples (faint scratches, borderline Loc
+   clusters, ambiguous Random patterns) receive the same gradient weight as easy ones.
+2. **No spatial attention**: the ResNet feature maps attend to channels uniformly.
+   For spatially-localised defects (Scratch = a streak, Loc = a cluster), the model
+   needs to know *where* on the map to look, not just *which features* to activate.
+
+### The techniques
+
+**Focal loss (corrected, γ=2, no class weights):**
+
+Focal loss modulates the per-sample CE loss by (1 − p_t)^γ where p_t is the
+model's probability for the correct class. Easy examples where the model is already
+confident (high p_t) contribute (1−p_t)^γ ≈ 0 to the gradient — nearly nothing.
+Hard examples (low p_t) contribute (1−p_t)^γ ≈ 1 — the full gradient.
+
+The corrected implementation deliberately omits class weights. The focal modulator
+already suppresses the dominant "none" class (model learns it early → high p_t → low
+focal weight). Adding class weights on top creates double-penalization that destabilises
+training — this was the root cause of the Phase C failure, documented in detail above.
+
+**CBAM — Convolutional Block Attention Module (Woo et al., ECCV 2018):**
+
+CBAM appends two lightweight attention operations after each ResNet stage:
+
+```
+Stage output → Channel attention → Spatial attention → next stage
+```
+
+*Channel attention* asks: which feature maps (out of 64/128/256/512) carry
+discriminative information for this prediction? A shared MLP operates on both
+average-pooled and max-pooled channel statistics and produces a per-channel
+weight in [0, 1].
+
+*Spatial attention* asks: where on the map are those features activated? It
+pools across channels (avg + max) and runs a 7×7 convolution to produce a
+spatial weight map of the same H×W as the feature maps.
+
+The two operations cost 43,912 parameters (0.4% of ResNet-18's 11.2M) — nearly
+free, but the spatial attention is exactly what's missing for streak and cluster
+defects.
+
+### Results
+
+Training ran 40 epochs with patience=10 on the 5090 (batch_size=128). Best
+checkpoint at epoch 34.
+
+```
+Epoch  1/40  train f1 0.641  |  val f1 0.732
+Epoch  8/40  train f1 0.870  |  val f1 0.884  ← already past CE best
+Epoch 19/40  train f1 0.910  |  val f1 0.903  ← past original Phase A result
+Epoch 34/40  train f1 0.955  |  val f1 0.927  ← checkpoint saved
+```
+
+**Test set (TTA×8 + per-class τ):**
+
+| Class | F1 (CE baseline) | F1 (Focal + CBAM) | Δ |
+|---|---|---|---|
+| Loc | 0.79 | **0.84** | +5pp |
+| Scratch | 0.82 | **0.86** | +4pp |
+| Random | 0.87 | **0.91** | +4pp |
+| Edge-Loc | 0.87 | **0.89** | +2pp |
+| Near-full | 0.93 | **0.95** | +2pp |
+| Edge-Ring | 0.98 | **0.99** | +1pp |
+| Center | 0.95 | **0.95** | = |
+| Donut | 0.86 | **0.86** | = |
+| none | 0.99 | **0.99** | = |
+| **Macro-F1** | **0.8952** | **0.9157** | **+2.0pp** |
+
+Notable calibration result: T=0.6685 (less than 1). Focal loss produces an
+underconfident model — the softmax distributions are flatter than CE because
+easy examples are suppressed during training and never push the logits to
+high-confidence values. Temperature scaling T<1 amplifies logits to match
+empirical accuracy; ECE improved from 0.0164 → 0.0031.
+
+**Operating point tradeoff:** The escape/FA distribution shifted compared to CE:
+275 escapes (5.4%) vs 54 (1.1%), with far fewer false alarms (137 vs 990). At
+the 10:1 cost assumption, cost-weighted error increased (0.0835 vs 0.0442). At
+cost ratios below ~4:1, focal+CBAM dominates on both metrics. The appropriate
+operating point depends on the fab's quality target.
+
+### Applying this to a real fab dataset
+
+CBAM is particularly valuable when:
+- Defect signatures are spatially small relative to the wafer (Loc clusters,
+  Scratch streaks) — the spatial attention module learns to focus on the relevant
+  region regardless of where it appears on the map
+- Multiple defect types can produce similar global statistics — channel attention
+  helps distinguish them by re-weighting the most discriminative feature maps
+
+Focal loss is most beneficial when:
+- A large fraction of training samples are "easy" (the model gets them right from
+  epoch 1) — class-weighted CE wastes gradient on those examples in every epoch
+- Hard examples are spread across classes, not concentrated in one rare class
+
+In a production ML pipeline, the escape/FA tradeoff documented here would be
+resolved by working with process engineers to establish the actual cost ratio for
+the specific product and customer context, then selecting the model and threshold
+accordingly.
+
+---
