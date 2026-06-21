@@ -190,12 +190,29 @@ def load_and_split(cfg: WaferConfig) -> Tuple[
         df, test_size=0.125, stratify=df["label"], random_state=cfg.seed
     )
 
-    # 4. Class weights for weighted CE (inverse class frequency on train set)
-    train_y = df_train["label"].map(CLASS_TO_IDX).values
+    # 4. Optionally augment training split with pseudo-labeled unlabeled maps.
+    #    Pseudo-labels are appended to the training split only — val and test are
+    #    never contaminated, so evaluation remains unbiased.
+    pseudo_path = getattr(cfg, "pseudo_label_path", "") or ""
+    if pseudo_path:
+        from pathlib import Path as _Path
+        pl_path = _Path(pseudo_path) if _Path(pseudo_path).is_absolute() else \
+                  (_Path(__file__).resolve().parents[2] / pseudo_path)
+        if pl_path.exists():
+            df_pseudo = pd.read_pickle(pl_path)[["waferMap", "label"]]
+            n_before = len(df_train)
+            df_train = pd.concat([df_train, df_pseudo], ignore_index=True)
+            print(f"Pseudo-labels: +{len(df_pseudo):,} rows appended to train "
+                  f"({n_before:,} → {len(df_train):,})")
+        else:
+            print(f"Warning: pseudo_label_path={pl_path!r} not found — skipping.")
+
+    # 5. Class weights for weighted CE (inverse class frequency on labeled train rows)
+    labeled_train_y = df_train["label"].map(CLASS_TO_IDX).dropna().astype(int).values
     raw_weights = compute_class_weight(
         class_weight="balanced",
         classes=np.arange(len(CLASS_NAMES)),
-        y=train_y,
+        y=labeled_train_y,
     )
     class_weights = torch.tensor(raw_weights, dtype=torch.float32)
 

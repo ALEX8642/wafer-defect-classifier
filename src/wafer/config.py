@@ -82,9 +82,12 @@ class WaferConfig:
     loss: str = "ce"               # ce | focal
     focal_gamma: float = 2.0       # focal loss concentration parameter
 
-    # --- attention (Phase E CBAM) ---
+    # --- attention (Phase F CBAM) ---
     cbam: bool = False             # append CBAM after each ResNet stage
     cbam_reduction: int = 16       # channel reduction ratio inside CBAM
+
+    # --- semi-supervised (Phase S pseudo-labeling) ---
+    pseudo_label_path: str = ""    # path to pseudo_labels.pkl; empty = disabled
 
     def __post_init__(self) -> None:
         self.data_root = _anchor(Path(self.data_root))
@@ -161,4 +164,6 @@ def build_arg_parser(description: str = "wafer classifier") -> argparse.Argument
                    help="Append CBAM attention after each ResNet stage")
     p.add_argument("--cbam-reduction", dest="cbam_reduction", type=int, default=None,
                    help="CBAM channel reduction ratio (default 16)")
+    p.add_argument("--pseudo-label-path", dest="pseudo_label_path", type=str, default=None,
+                   help="Path to pseudo_labels.pkl; appends to training split")
     return p
