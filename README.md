@@ -61,7 +61,7 @@ Does the model key on the physically meaningful region? Three examples:
 
 | Scratch (99.99%) | Edge-Ring (100%) | Center (54%) |
 |---|---|---|
-| ![Scratch](outputs/grad_cam/gradcam_scratch.png) | ![Edge-Ring](outputs/grad_cam/gradcam_edge_ring.png) | ![Center](outputs/grad_cam/gradcam_center.png) |
+| ![Scratch](assets/gradcam_scratch.png) | ![Edge-Ring](assets/gradcam_edge_ring.png) | ![Center](assets/gradcam_center.png) |
 
 **Scratch**: activation tightly follows the linear/arc streak — the model has learned
 the mechanical-damage spatial signature.
@@ -73,6 +73,23 @@ valid representation.
 
 **Center**: correct localisation to the lower-center cluster at 54% confidence,
 reflecting genuine ambiguity between Center and Loc.
+
+---
+
+## Calibration & operating point
+
+| Confusion matrix | Reliability diagram | Threshold sensitivity |
+|---|---|---|
+| ![Confusion matrix](assets/confusion_matrix.png) | ![Reliability diagram](assets/reliability_diagram.png) | ![Threshold sensitivity](assets/threshold_sensitivity.png) |
+
+**Confusion matrix**: errors concentrate in the expected tail-class confusions
+(Loc↔Center, Scratch↔Edge-Loc) rather than leaking into "none" — escapes stay rare.
+
+**Reliability diagram**: post temperature-scaling (T=1.1344) the curve tracks the
+diagonal closely — ECE 0.0033, calibrated confidence you can threshold on.
+
+**Threshold sensitivity**: cost-weighted error across τ ∈ [0.05, 0.99] at a 10:1
+escape/false-alarm ratio, locating the operating point used for per-class thresholds.
 
 ---
 

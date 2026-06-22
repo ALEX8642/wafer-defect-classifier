@@ -147,7 +147,7 @@ resulting in flatter softmax distributions at inference. Temperature T < 1 sharp
 these distributions back to match empirical accuracy. ECE improved from 0.0164 → 0.0031,
 making this one of the best-calibrated checkpoints in the project.
 
-*Reliability diagram: `outputs/reliability_diagram.png`*
+*Reliability diagram: `assets/reliability_diagram.png`*
 
 ---
 
@@ -206,7 +206,7 @@ High thresholds for Scratch and Edge-Loc are the expected outcome given their lo
 baseline precision. Predictions below τ fall through to the next-highest class
 (typically "none") — visible in the confusion matrix as increased none predictions.
 
-The threshold sensitivity plot (`outputs/threshold_sensitivity.png`) shows how
+The threshold sensitivity plot (`assets/threshold_sensitivity.png`) shows how
 escape rate and false-alarm rate trade off across the full range of decision
 thresholds. Key observation: the best global macro-F1 occurs at τ = 0.06 for the
 none-class threshold (macro-F1 = 0.907), far lower than the naïve τ = 0.50 default.
