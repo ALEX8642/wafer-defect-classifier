@@ -180,6 +180,17 @@ configs/baseline.yaml — training hyperparameters
 
 ---
 
+## Self-supervised + ensemble extension
+
+A follow-up repo, [wafer-ssl](https://github.com/alex8642/wafer-ssl), pushes this
+further: SimCLR contrastive pretraining on the 638k unlabeled maps plus a 4-model
+ensemble reaches **test macro-F1 0.9423** (balanced accuracy 0.9427). An ablation
+against a from-scratch ensemble (0.9339) attributes ~+0.8pp to the self-supervised
+pretraining and the remainder to variance reduction from ensembling — which also
+quantifies the single-seed ±0.01–0.02 variance noted above.
+
+---
+
 ## References
 
 Wu, M.-J., Jang, J.-S. R., Chen, J.-L. (2015). Wafer Map Failure Pattern Recognition
