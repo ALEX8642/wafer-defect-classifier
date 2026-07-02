@@ -131,6 +131,21 @@ def _load_assets(cfg: WaferConfig):
 # Image decode: PNG → (3, H, W) one-hot tensor
 # ---------------------------------------------------------------------------
 
+def _lut_mismatch_fraction(img_array: np.ndarray, tol: int = 25) -> float:
+    """
+    Fraction of pixels whose gray value is not near the project LUT {40, 160, 255}.
+
+    A rendered wafer-map PNG decodes to ~0; an arbitrary photo or screenshot has
+    a continuous gray distribution and scores high. Used to warn on inputs the
+    LUT decode in _png_to_tensor would silently turn into a garbage wafer map.
+    """
+    gray = img_array.mean(axis=2) if img_array.ndim == 3 else img_array.astype(float)
+    near = np.zeros(gray.shape, dtype=bool)
+    for v in (40, 160, 255):
+        near |= np.abs(gray - v) <= tol
+    return float(1.0 - near.mean())
+
+
 def _png_to_tensor(img_array: np.ndarray, input_size: int = 224) -> torch.Tensor:
     """
     Reverse the project LUT (outside=40, pass=160, fail=255) back to {0,1,2},
@@ -329,6 +344,14 @@ def build_demo(cfg: WaferConfig):
         if img_array is None:
             return None, "*Upload a wafer map or click an example to classify it.*"
         try:
+            warning = ""
+            mismatch = _lut_mismatch_fraction(img_array)
+            if mismatch > 0.05:
+                warning = (
+                    f"> ⚠️ **Input doesn't look like a wafer-map PNG** — {mismatch:.0%} "
+                    "of pixels fall outside the 3-value LUT (outside=40, pass=160, "
+                    "fail=255). The prediction below is unreliable.\n\n"
+                )
             tensor, heatmap, pred_cls, cal_probs = _run_inference(
                 img_array, model, target_layer, temperature, thresholds, cfg
             )
@@ -337,7 +360,7 @@ def build_demo(cfg: WaferConfig):
             cam_path = demo_tmp / f"cam_{_call_count[0]}.png"
             fig_path = _build_figure(tensor, heatmap, pred_cls, cal_probs, temperature, cam_path)
             md = _build_markdown(pred_cls, cal_probs, temperature)
-            return fig_path, md
+            return fig_path, warning + md
         except Exception as exc:
             return None, f"**Error:** {exc}"
 
