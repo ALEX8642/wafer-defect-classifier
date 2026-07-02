@@ -97,7 +97,7 @@ and `torch.backends.cudnn.benchmark = False`. Results locked across GPU sessions
 Full per-class breakdown and narrative in `docs/IMPROVEMENTS.md` Phase F section.
 
 ```bash
-# To replicate: in configs/baseline.yaml set loss: focal, cbam: true, num_epochs: 40
+# To replicate (configs/baseline.yaml now defaults to this recipe: loss focal, cbam true, 40 epochs):
 python -m wafer.train && python -m wafer.calibrate && python -m wafer.evaluate
 ```
 

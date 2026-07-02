@@ -85,8 +85,8 @@ reflecting genuine ambiguity between Center and Loc.
 **Confusion matrix**: errors concentrate in the expected tail-class confusions
 (Loc↔Center, Scratch↔Edge-Loc) rather than leaking into "none" — escapes stay rare.
 
-**Reliability diagram**: post temperature-scaling (T=1.1344) the curve tracks the
-diagonal closely — ECE 0.0033, calibrated confidence you can threshold on.
+**Reliability diagram**: post temperature-scaling (T=0.6685) the curve tracks the
+diagonal closely — ECE 0.0031, calibrated confidence you can threshold on.
 
 **Threshold sensitivity**: cost-weighted error across τ ∈ [0.05, 0.99] at a 10:1
 escape/false-alarm ratio, locating the operating point used for per-class thresholds.
@@ -100,7 +100,7 @@ pip install -r requirements.txt
 pip install -e .
 
 # Place LSWMD.pkl in data/raw/ (download from Kaggle: wafer-map-dataset)
-# then train (takes ~10 min on a 4090):
+# then train — config defaults reproduce the headline focal+CBAM recipe (~15 min on a 5090):
 python -m wafer.train
 
 # Run the Gradio demo:
@@ -128,21 +128,32 @@ values that don't exist in the domain).
 **Architecture**: ResNet-18 from scratch — research consistently shows ResNet-18
 matches or outperforms ResNet-50 on this task, attributed to the relative simplicity
 of binned spatial patterns vs. natural images. Three-channel first conv reused
-unchanged; head replaced with a 9-class linear layer.
+unchanged; head replaced with a 9-class linear layer. The headline model appends
+CBAM channel + spatial attention after each ResNet stage (+43.9k parameters, ~0.4%
+overhead); the gains land mostly on the tail classes (Scratch, Loc, Random).
 
-**Imbalance (85% "none")**: Class-weighted cross-entropy with weights from
-`sklearn.compute_class_weight('balanced')`. Directly encodes the domain intuition:
-an escaped defect costs more than a false alarm.
+**Imbalance (85% "none")**: Focal loss (γ=2, no class weights) — the modulating
+factor down-weights the easy, dominant "none" class and focuses learning on hard
+tail-class examples. Combining focal with class weights double-penalizes rare
+classes and destabilizes training (negative result documented in
+`docs/IMPROVEMENTS.md`). The CE baseline instead uses class-weighted cross-entropy
+(`sklearn.compute_class_weight('balanced')`).
 
-**Calibration**: Temperature scaling (T=1.1344, fit on val set via LBFGS). Reduces ECE
-(0.0098 → 0.0033). T > 1 confirms mild overconfidence typical of from-scratch
-training.
+**Calibration**: Temperature scaling (T=0.6685, fit on val set via LBFGS). Reduces ECE
+(0.0164 → 0.0031). T < 1 means the focal-trained model is *under*confident — focal's
+down-weighting of easy examples suppresses peak confidence, so calibration sharpens
+rather than softens. (The CE baseline showed the usual from-scratch pattern instead:
+mildly overconfident, T=1.13.)
 
 **Cost-of-quality framing**: Two error types with different operational costs —
 escape (defect predicted as none) vs. false alarm (none predicted as defect).
-With TTA + per-class thresholds: 53 escapes (1.0% of defect samples), 1101 false alarms
-(3.7% of none samples), cost-weighted error 0.0472 at 10:1 escape/FA cost ratio.
-Threshold sensitivity plot shows how the operating point shifts across τ ∈ [0.05, 0.99].
+The focal+CBAM model with TTA + per-class thresholds sits at 275 escapes / 137 false
+alarms — cost-weighted error 0.0835 at a 10:1 escape/FA cost ratio. The CE baseline
+occupied a different operating point: 54 escapes / 990 false alarms (0.0442). In
+other words, focal loss bought +2pp macro-F1 by trading escapes for false alarms;
+which point is better depends on the fab's true cost ratio, and per-class thresholds
+are the lever for moving along that curve. The threshold-sensitivity plot shows the
+sweep across τ ∈ [0.05, 0.99].
 
 ---
 
@@ -152,11 +163,11 @@ Threshold sensitivity plot shows how the operating point shifts across τ ∈ [0
 src/wafer/
   config.py      — WaferConfig dataclass, YAML + CLI merge
   data.py        — WM-811K loading, 70/10/20 stratified split, DataLoaders
-  model.py       — ResNet-18 builder
+  model.py       — ResNet-18 builder, optional CBAM attention
   train.py       — AdamW + CosineAnnealingLR + early stopping on val macro-F1
   evaluate.py    — Test-set metrics, per-class breakdown, confusion matrix
   calibrate.py   — Temperature scaling, ECE, reliability diagram, cost analysis
-  explain.py     — GradCAM (hook-based, no extra deps), overlay figures
+  explain.py     — Grad-CAM / Grad-CAM++ (hook-based, no extra deps), overlay figures
   demo.py        — Gradio demo
 
 docs/

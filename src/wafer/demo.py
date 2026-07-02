@@ -344,8 +344,8 @@ def build_demo(cfg: WaferConfig):
     with gr.Blocks(title="Wafer Defect Classifier") as demo:
         gr.Markdown(
             "# Wafer Defect Classifier\n"
-            "ResNet-18 trained on WM-811K (172 k labeled maps, 9 classes). "
-            "Macro-F1 **0.87** on the held-out test set. "
+            "ResNet-18 + CBAM trained on WM-811K (172 k labeled maps, 9 classes). "
+            "Macro-F1 **0.92** on the held-out test set (TTA×8 + per-class thresholds). "
             "Click an example below or upload your own wafer-map PNG."
         )
 

@@ -10,7 +10,7 @@ output_dir: outputs          # checkpoints, logs, plots
 batch_size: 128
 num_workers: 4               # set to 0 on Windows if multiprocessing errors
 seed: 42
-num_epochs: 30
+num_epochs: 40
 lr: 1.0e-3
 weight_decay: 1.0e-4
 input_size: 224              # square resize target for wafer maps
@@ -26,12 +26,12 @@ patience: 7                  # early-stopping epochs without val macro-F1 improv
 tta: true                    # test-time augmentation over the D4 group (4 rotations × 2 flips)
                              # averages 8 softmax outputs; ~+1-2% macro-F1 at inference cost
 
-# Phase C — focal loss retraining (change loss to "focal" when retraining)
-loss: ce                     # ce | focal  (change to "focal" for experimental retraining)
+# Phase C/F — loss (focal is the headline recipe; "ce" reproduces the class-weighted CE baseline)
+loss: focal                  # focal | ce
 focal_gamma: 2.0             # focal loss γ: higher = more focus on hard examples
 
-# Phase F — CBAM attention (set cbam: true to enable when retraining)
-cbam: false                  # append CBAM after each ResNet stage (channel + spatial attention)
+# Phase F — CBAM attention (headline recipe; set false for the plain ResNet baseline)
+cbam: true                   # append CBAM after each ResNet stage (channel + spatial attention)
 cbam_reduction: 16           # channel reduction ratio inside CBAM MLP
 
 # Phase S — semi-supervised pseudo-labeling (run pseudo_label.py first, then set path)
